@@ -55,11 +55,11 @@ INSTALLED_APPS = [
 AUTH_USER_MODEL = 'users.User'
 
 REST_FRAMEWORK = {
-    'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.TokenAuthentication',
-    ],
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'apps.users.authentication.ExpiringTokenAuthentication',
+    ),
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.AllowAny',
+        'rest_framework.permissions.IsAuthenticated',
     ],
     'DATETIME_FORMAT': "%Y-%m-%d %H:%M:%S %z", 
     'DATETIME_INPUT_FORMATS': ['iso-8601'], 

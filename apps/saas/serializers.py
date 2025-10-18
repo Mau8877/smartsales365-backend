@@ -2,6 +2,22 @@ from rest_framework import serializers
 from .models import PlanSuscripcion, Tienda, PagoSuscripcion
 from apps.users.models import User
 
+# Serializer para el formulario de registro público
+class RegistroSerializer(serializers.Serializer):
+    """
+    Serializer para validar los datos del formulario de registro público.
+    No está ligado a un modelo, solo valida la entrada.
+    """
+    plan_id = serializers.IntegerField()
+    tienda_nombre = serializers.CharField(max_length=100)
+    admin_nombre = serializers.CharField(max_length=100)
+    admin_apellido = serializers.CharField(max_length=100)
+    admin_ci = serializers.CharField(max_length=20)
+    admin_email = serializers.EmailField()
+    admin_password = serializers.CharField(write_only=True, min_length=8)
+    admin_telefono = serializers.CharField(max_length=20, required=False, allow_blank=True)
+
+
 # Serializer para mostrar información básica del admin de contacto
 class AdminContactoSerializer(serializers.ModelSerializer):
     nombre_completo = serializers.SerializerMethodField()
