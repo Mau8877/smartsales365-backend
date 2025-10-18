@@ -9,7 +9,12 @@ class IsAdminOrSuperAdmin(permissions.BasePermission):
     """Permiso para solo permitir acceso a usuarios con rol Admin o SuperAdmin."""
     def has_permission(self, request, view):
         user = request.user
-        return user.is_authenticated and user.rol.nombre in ['admin', 'superAdmin']
+        if user.is_authenticated and user.is_superuser:
+            return True
+        if user.is_authenticated and hasattr(user, 'rol') and user.rol:
+            return user.rol.nombre in ['admin', 'superAdmin']
+            
+        return False
 
 class BitacoraViewSet(viewsets.ReadOnlyModelViewSet):
     """
