@@ -19,7 +19,6 @@ def get_client_ip(request):
 def get_actor_usuario_from_request(request):
     """
     Intenta obtener el usuario actor (objeto User) desde el request.
-    Retorna el objeto User si está autenticado, o None.
     """
     try:
         if hasattr(request, 'user') and request.user.is_authenticated:
@@ -31,17 +30,26 @@ def get_actor_usuario_from_request(request):
 
 def log_action(request, accion, objeto=None, usuario=None):
     """
-    Registra una acción en la bitácora.
+    Registra una acción en la bitácora, asociándola a una tienda si corresponde.
     """
     try:
         ip = get_client_ip(request)
         if usuario is None:
             usuario = get_actor_usuario_from_request(request)
+
+        tienda_actor = None
+        # Si el usuario existe y tiene una tienda asociada, la guardamos en el log
+        if usuario and hasattr(usuario, 'tienda') and usuario.tienda:
+            tienda_actor = usuario.tienda
+
         Bitacora.objects.create(
             user=usuario,
+            tienda=tienda_actor,
             accion=accion,
             ip=ip,
             objeto=objeto
         )
     except Exception as e:
+        # Es mejor no interrumpir una petición si falla el logging.
+        # Para producción, se podría usar el sistema de logging de Python.
         print(f"Error al registrar en bitácora: {e}")

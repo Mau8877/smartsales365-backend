@@ -67,6 +67,7 @@ urlpatterns = [
         path('ventas/', include('apps.ventas.urls')),
         path('ia/', include('apps.predicciones.urls')),
         path('reportes/', include('apps.reportes.urls')),
+        path('saas/', include('apps.saas.urls')),
     ])),
 ]
 

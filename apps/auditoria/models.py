@@ -1,14 +1,24 @@
 from django.db import models
 from apps.users.models import User
+from apps.saas.models import Tienda
 
 # Modelo para registrar las acciones de auditoría en el sistema
-class Bitacora(models.Model):  
+class Bitacora(models.Model):
     user = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name='bitacoras'
+    )
+    
+    tienda = models.ForeignKey(
+        Tienda,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='bitacoras',
+        verbose_name="Tienda (Tenant)"
     )
     
     accion = models.TextField(
@@ -44,6 +54,9 @@ class Bitacora(models.Model):
             except:
                 user_info = self.user.email 
         else:
-            user_info = "Anónimo"
-        rol_info = f" ({self.user.rol.nombre})" if self.user and self.user.rol else ""
-        return f"{self.timestamp.isoformat()} — {user_info}{rol_info} — {self.accion[:80]}..."
+            user_info = "Sistema"
+        
+        rol_info = f" ({self.user.rol.get_nombre_display()})" if self.user and self.user.rol else ""
+        tienda_info = f" [Tienda: {self.tienda.nombre}]" if self.tienda else ""
+        
+        return f"{self.timestamp.isoformat()} — {user_info}{rol_info}{tienda_info} — {self.accion[:60]}..."

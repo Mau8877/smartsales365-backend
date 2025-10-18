@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     'apps.predicciones',
     'apps.reportes',
     'apps.ventas',
+    'apps.saas',
     'rest_framework',
     'corsheaders',
     'rest_framework.authtoken',
