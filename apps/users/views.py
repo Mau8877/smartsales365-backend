@@ -72,7 +72,7 @@ class UserViewSet(viewsets.ModelViewSet):
     def logout(self, request):
         try:
             Token.objects.filter(user=request.user).delete()
-            log_action(request=request, accion=f"Cierre de sesión del usuario {request.user.id_usuario}", objeto=f"Usuario: {request.user.id_usuario}", usuario=request.user)
+            log_action(request=request, accion=f"Cierre de sesión del usuario (id:{request.user.id_usuario})", objeto=f"Usuario: {request.user.email}", usuario=request.user)
             return Response({"message": "Cierre de sesión exitoso"}, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"error": f"Ocurrió un error al cerrar sesión: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -126,13 +126,24 @@ class RolViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         rol_obj = serializer.save()
         actor = get_actor_usuario_from_request(self.request)
-        log_action(request=self.request, accion=f"Creó Rol {rol_obj.nombre}", objeto=f"Rol: {rol_obj.nombre} (id:{rol_obj.id})", usuario=actor)
+        log_action(
+            request=self.request, 
+            accion=f"Creó Rol {rol_obj.nombre}", 
+            objeto=f"Rol: {rol_obj.nombre} (id:{rol_obj.id}) por {actor.email}", 
+            usuario=actor
+        )
 
     def perform_destroy(self, instance):
         nombre = instance.nombre
         pk = instance.pk
+        actor = get_actor_usuario_from_request(self.request)
         instance.delete()
-        log_action(request=self.request, accion=f"Eliminó Rol {nombre} (id:{pk})", objeto=f"Rol: {nombre} (id:{pk})", usuario=get_actor_usuario_from_request(self.request))
+        log_action(
+            request=self.request, 
+            accion=f"Eliminó Rol {nombre} (id:{pk})", 
+            objeto=f"Rol: {nombre} (id:{pk}) por {actor.email}", 
+            usuario=actor
+        )
 
     def perform_update(self, serializer):
         rol_obj = serializer.save()
@@ -140,7 +151,7 @@ class RolViewSet(viewsets.ModelViewSet):
         log_action(
             request=self.request,
             accion=f"Actualizó Rol {rol_obj.nombre}",
-            objeto=f"Rol: {rol_obj.nombre} (id:{rol_obj.id})",
+            objeto=f"Rol: {rol_obj.nombre} (id:{rol_obj.id}) por {actor.email}",
             usuario=actor
         )
 
@@ -156,17 +167,24 @@ class ClienteViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         cliente_obj = serializer.save()
-        log_action(request=self.request, accion=f"Creó perfil de Cliente para {cliente_obj.user.email}", objeto=f"Cliente: {cliente_obj.user.email} (id:{cliente_obj.id})", usuario=get_actor_usuario_from_request(self.request))
+        actor = get_actor_usuario_from_request(self.request)
+        log_action(
+            request=self.request, 
+            accion=f"Creó perfil de Cliente para {cliente_obj.user.email} (id:{cliente_obj.id})", 
+            objeto=f"Cliente: {cliente_obj.user.email} (id:{cliente_obj.id}) Creado por: {actor.email}", 
+            usuario=actor
+        )
 
     def perform_destroy(self, instance):
         email = instance.user.email 
         pk = instance.pk
+        actor = get_actor_usuario_from_request(self.request)
         instance.delete()
         log_action(
             request=self.request,
             accion=f"Eliminó perfil de Cliente {email} (id:{pk})",
-            objeto=f"Cliente: {email} (id:{pk})",
-            usuario=get_actor_usuario_from_request(self.request)
+            objeto=f"Cliente: {email} (id:{pk}) Eliminado por: {actor.email}",
+            usuario=actor
         )
 
     def perform_update(self, serializer):
@@ -175,7 +193,7 @@ class ClienteViewSet(viewsets.ModelViewSet):
         log_action(
             request=self.request,
             accion=f"Actualizó perfil de Cliente {cliente_obj.user.email}",
-            objeto=f"Cliente: {cliente_obj.user.email} (id:{cliente_obj.id})",
+            objeto=f"Cliente: {cliente_obj.user.email} (id:{cliente_obj.id}) Actualizado por: {actor.email}",
             usuario=actor
         )
 
@@ -191,17 +209,24 @@ class VendedorViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         vendedor_obj = serializer.save()
-        log_action(request=self.request, accion=f"Creó perfil de Vendedor para {vendedor_obj.user.email}", objeto=f"Vendedor: {vendedor_obj.user.email} (id:{vendedor_obj.id})", usuario=get_actor_usuario_from_request(self.request))
+        actor = get_actor_usuario_from_request(self.request)
+        log_action(
+            request=self.request, 
+            accion=f"Creó perfil de Vendedor para {vendedor_obj.user.email}", 
+            objeto=f"Vendedor: {vendedor_obj.user.email} (id:{vendedor_obj.id}) Creado por: {actor.email}", 
+            usuario=actor
+        )
 
     def perform_destroy(self, instance):
         email = instance.user.email 
         pk = instance.pk
+        actor = get_actor_usuario_from_request(self.request)
         instance.delete()
         log_action(
             request=self.request,
             accion=f"Eliminó perfil de Vendedor {email} (id:{pk})",
-            objeto=f"Vendedor: {email} (id:{pk})",
-            usuario=get_actor_usuario_from_request(self.request)
+            objeto=f"Vendedor: {email} (id:{pk}) Eliminado por: {actor.email}",
+            usuario=actor
         )
 
     def perform_update(self, serializer):
@@ -210,7 +235,7 @@ class VendedorViewSet(viewsets.ModelViewSet):
         log_action(
             request=self.request,
             accion=f"Actualizó perfil de Vendedor {vendedor_obj.user.email}",
-            objeto=f"Vendedor: {vendedor_obj.user.email} (id:{vendedor_obj.id})",
+            objeto=f"Vendedor: {vendedor_obj.user.email} (id:{vendedor_obj.id}) Actualizado por: {actor.email}",
             usuario=actor
         )
 
@@ -226,17 +251,24 @@ class AdministradorViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         admin_obj = serializer.save()
-        log_action(request=self.request, accion=f"Creó perfil de Administrador para {admin_obj.user.email}", objeto=f"Administrador: {admin_obj.user.email} (id:{admin_obj.id})", usuario=get_actor_usuario_from_request(self.request))
+        actor = get_actor_usuario_from_request(self.request)
+        log_action(
+            request=self.request, 
+            accion=f"Creó perfil de Administrador para {admin_obj.user.email}", 
+            objeto=f"Administrador: {admin_obj.user.email} (id:{admin_obj.id}) Creado por: {actor.email}", 
+            usuario=actor
+        )
 
     def perform_destroy(self, instance):
         email = instance.user.email 
         pk = instance.pk
+        actor = get_actor_usuario_from_request(self.request)
         instance.delete()
         log_action(
             request=self.request,
             accion=f"Eliminó perfil de Administrador {email} (id:{pk})",
-            objeto=f"Administrador: {email} (id:{pk})",
-            usuario=get_actor_usuario_from_request(self.request)
+            objeto=f"Administrador: {email} (id:{pk}) Eliminado por: {actor.email}",
+            usuario=actor
         )
 
     def perform_update(self, serializer):
@@ -245,6 +277,6 @@ class AdministradorViewSet(viewsets.ModelViewSet):
         log_action(
             request=self.request,
             accion=f"Actualizó perfil de Administrador {admin_obj.user.email}",
-            objeto=f"Administrador: {admin_obj.user.email} (id:{admin_obj.id})",
+            objeto=f"Administrador: {admin_obj.user.email} (id:{admin_obj.id}) Actualizado por: {actor.email}",
             usuario=actor
         )
