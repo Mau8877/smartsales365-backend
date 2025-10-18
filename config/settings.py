@@ -11,10 +11,12 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
+import os
+from dotenv import load_dotenv
+from urllib.parse import urlparse, parse_qsl
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
-
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
@@ -37,7 +39,29 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'drf_yasg',
+    'apps.users.apps.UsersConfig',
+    'apps.comercial',
+    'apps.auditoria',
+    'apps.predicciones',
+    'apps.reportes',
+    'apps.ventas',
+    'rest_framework',
+    'corsheaders',
+    'rest_framework.authtoken',
 ]
+
+AUTH_USER_MODEL = 'users.User'
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.TokenAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.AllowAny',
+    ],
+    
+}
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -72,10 +96,19 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
+load_dotenv()
+
+tmpPostgres = urlparse(os.getenv("DATABASE_URL"))
+
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': tmpPostgres.path.replace('/', ''),
+        'USER': tmpPostgres.username,
+        'PASSWORD': tmpPostgres.password,
+        'HOST': tmpPostgres.hostname,
+        'PORT': 5432,
+        'OPTIONS': dict(parse_qsl(tmpPostgres.query)),
     }
 }
 
@@ -104,7 +137,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'America/La_Paz'
 
 USE_I18N = True
 
@@ -114,7 +147,13 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
+# Archivos estáticos (CSS, JS, imágenes de la app)
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles' 
+
+# Archivos de MEDIOS (Subidos por el usuario, como la foto_perfil)
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
