@@ -80,8 +80,8 @@ SWAGGER_SETTINGS = {
 }
 
 # Stripe Configuration
-STRIPE_SECRET_KEY = 'sk_test_51SK5fVJqBet7D6PVIS07bgcffaj15RvRC3zeRNAAegTaM6zw1sJIGFdqw0au8AT4oQ3AZD8FjLaPuDkEN7W2CHyI00MKLq4oFd'  # Tu secret key de Stripe
-STRIPE_PUBLISHABLE_KEY = 'pk_test_51SK5fVJqBet7D6PVZMKdqta99F30XMDO6dfsq8eWl9gBu0eoJ4HuwYbqKxHR8E6ZzOzAvUSFzQAkCmoFuSmTyLvX00ruc1nnq8'  # Tu publishable key de Stripe
+STRIPE_SECRET_KEY = os.environ.get('STRIPE_SK')  # Tu secret key de Stripe
+STRIPE_PUBLISHABLE_KEY = os.environ.get('STRIPE_PK')  # Tu publishable key de Stripe
 FRONTEND_URL = 'http://localhost:5173'  # URL de tu frontend
 
 MIDDLEWARE = [
