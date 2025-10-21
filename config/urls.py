@@ -48,7 +48,7 @@ urlpatterns = [
                 title="SmartSales365 API",
                 default_version='v1',
                 description="Sistema Inteligente de Gestión Comercial y Reportes Dinámicos",
-                contact=openapi.Contact(email="maurogurpi@gmail.com"),
+                contact=openapi.Contact(email="maurogupri@gmail.com"),
                 license=openapi.License(name="Private License"),
             ),
             public=True,

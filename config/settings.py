@@ -79,7 +79,13 @@ SWAGGER_SETTINGS = {
     'DEFAULT_AUTO_SCHEMA_CLASS': 'drf_yasg.inspectors.SwaggerAutoSchema',
 }
 
+# Stripe Configuration
+STRIPE_SECRET_KEY = 'sk_test_51SK5fVJqBet7D6PVIS07bgcffaj15RvRC3zeRNAAegTaM6zw1sJIGFdqw0au8AT4oQ3AZD8FjLaPuDkEN7W2CHyI00MKLq4oFd'  # Tu secret key de Stripe
+STRIPE_PUBLISHABLE_KEY = 'pk_test_51SK5fVJqBet7D6PVZMKdqta99F30XMDO6dfsq8eWl9gBu0eoJ4HuwYbqKxHR8E6ZzOzAvUSFzQAkCmoFuSmTyLvX00ruc1nnq8'  # Tu publishable key de Stripe
+FRONTEND_URL = 'http://localhost:5173'  # URL de tu frontend
+
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -87,6 +93,34 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+]
+
+# Configuración CORS
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
+# O si quieres permitir todos los origins en desarrollo:
+# CORS_ALLOW_ALL_ORIGINS = True  # Solo para desarrollo
+
+# Headers permitidos
+CORS_ALLOW_HEADERS = [
+    'content-type',
+    'authorization',
+    'x-requested-with',
+]
+
+# Métodos permitidos
+CORS_ALLOW_METHODS = [
+    'GET',
+    'POST',
+    'PUT',
+    'PATCH',
+    'DELETE',
+    'OPTIONS'
 ]
 
 ROOT_URLCONF = 'config.urls'

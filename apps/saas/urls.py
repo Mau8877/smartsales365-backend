@@ -1,14 +1,19 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import PlanSuscripcionViewSet, TiendaViewSet, PagoSuscripcionViewSet
+from .views import *
 
-# Creamos un router para registrar las vistas automáticamente
 router = DefaultRouter()
 router.register(r'planes', PlanSuscripcionViewSet, basename='plan')
 router.register(r'tiendas', TiendaViewSet, basename='tienda')
 router.register(r'pagos', PagoSuscripcionViewSet, basename='pago')
 
-# Las URLs de la API son generadas automáticamente por el router.
 urlpatterns = [
     path('', include(router.urls)),
+    
+    # --- RUTA PARA REGISTRO DE PRUEBA GRATUITA ---
+    path('registro/directo/', registro_directo_prueba, name='registro-directo-prueba'),
+    
+    # --- RUTAS PARA EL FLUJO DE PAGO CON STRIPE ---
+    path('stripe/crear-sesion/', crear_sesion_pago_stripe, name='stripe-crear-sesion'),
+    path('stripe/confirmar/', confirmar_registro_pago, name='stripe-confirmar-pago'),
 ]

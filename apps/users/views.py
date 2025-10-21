@@ -106,12 +106,18 @@ class UserViewSet(viewsets.ModelViewSet):
 
             token, _ = Token.objects.get_or_create(user=user)
             
-            tienda_info = f" en Tienda: {user.tienda.nombre} (ID: {user.tienda.id})" if user.tienda else ""
-            log_action(request, f"Inicio de sesión{tienda_info}", f"Usuario: {email}", user)
+            if user.rol and user.rol.nombre == 'superAdmin':
+                loginfo = " (Global - SuperAdmin)"
+            elif user.tienda:  # Más simple: solo pregunta si el usuario pertenece a una tienda
+                loginfo = f" en Tienda: {user.tienda.nombre} (ID: {user.tienda.id})"
+            else:
+                loginfo = f" Cliente (ID:{user.user_id})"  # Cualquier otro rol sin tienda (como 'cliente') caerá aquí
 
+            log_action(request, f"Inicio de sesión{loginfo}", f"Usuario: {email}", user)
             return Response({
                 "message": "Login exitoso",
                 "token": token.key,
+                "user_id": user.id_usuario,
                 "rol": user.rol.nombre if user.rol else None,
                 "tienda_id": user.tienda.id if user.tienda else None,
                 "nombre_completo": f"{user.profile.nombre} {user.profile.apellido}" if hasattr(user, 'profile') else 'N/A'

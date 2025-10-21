@@ -7,15 +7,17 @@ from dateutil.relativedelta import relativedelta
 class PlanSuscripcion(models.Model):
     PLAN_SUSCRIPCION = [
         ('PRUEBA', 'Prueba'),
-        ('BASICO', 'Básico'),
-        ('ESTANDAR', 'Estándar'),
-        ('PREMIUM', 'Premium'),
+        ('BASICO-M', 'Básico-M'),
+        ('PREMIUM-M', 'Premium-M'),
+        ('BASICO-A', 'Básico-A'),
+        ('PREMIUM-A', 'Premium-A'),  
     ]
     nombre = models.CharField(max_length=50, unique=True, choices=PLAN_SUSCRIPCION, verbose_name="Nombre del Plan")
     precio_mensual = models.DecimalField(max_digits=10, decimal_places=2, verbose_name="Precio Mensual")
     limite_usuarios = models.IntegerField(default=5, verbose_name="Límite de Usuarios (Staff)")
     descripcion = models.TextField(blank=True, null=True, verbose_name="Descripción")
     dias_prueba = models.IntegerField(default=0, help_text="Duración en días para planes de prueba. 0 para planes de pago.")
+    stripe_price_id = models.CharField(max_length=100, blank=True, null=True, help_text="ID del objeto Price de Stripe")
 
     def __str__(self):
         if self.nombre == 'PRUEBA':
