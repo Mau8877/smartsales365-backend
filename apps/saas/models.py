@@ -56,6 +56,12 @@ class Tienda(models.Model):
         verbose_name="Admin de Contacto"
     )
     
+    clientes = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        through='TiendaCliente', # Le indicamos que use nuestro modelo puente
+        related_name='tiendas_como_cliente'
+    )
+
     def save(self, *args, **kwargs):
         if not self.pk and self.plan: # si es un objeto nuevo
             if self.plan.dias_prueba > 0:
@@ -74,6 +80,20 @@ class Tienda(models.Model):
         verbose_name = "Tienda (Tenant)"
         verbose_name_plural = "Tiendas (Tenants)"
         ordering = ['nombre']
+
+# Modelo Puente para la relación Many-to-Many entre Tienda y Cliente
+class TiendaCliente(models.Model):
+    tienda = models.ForeignKey(Tienda, on_delete=models.CASCADE)
+    cliente = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    fecha_asociacion = models.DateField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('tienda', 'cliente') # Evita que un cliente se asocie dos veces a la misma tienda
+        verbose_name = "Cliente de Tienda"
+        verbose_name_plural = "Clientes de Tiendas"
+    
+    def __str__(self):
+        return f"Cliente {self.cliente.email} en Tienda {self.tienda.nombre}"
 
 # Modelo Pagos de Suscripción
 class PagoSuscripcion(models.Model):

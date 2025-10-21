@@ -148,8 +148,6 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-load_dotenv()
-
 tmpPostgres = urlparse(os.getenv("DATABASE_URL"))
 
 DATABASES = {

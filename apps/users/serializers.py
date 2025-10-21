@@ -3,162 +3,101 @@ from django.db import transaction
 from apps.saas.models import Tienda
 from .models import User, Rol, UserProfile, Cliente, Vendedor, Administrador
 
-# --- Serializer para el Modelo Rol ---
+# --- Serializers de base (sin cambios) ---
 class RolSerializer(serializers.ModelSerializer):
-    """
-    Serializer para listar y gestionar Roles.
-    Muestra los campos principales del modelo Rol.
-    """
-    class Meta:
-        model = Rol
-        fields = ['id', 'nombre', 'descripcion', 'estado']
-
-
-# --- Serializers para los Perfiles Específicos (para anidación) ---
-# Estos serializers se usarán para anidar DENTRO del UserSerializer.
-# No incluyen el campo 'user' para evitar redundancia en la creación.
+    class Meta: model = Rol; fields = ['id', 'nombre', 'descripcion', 'estado']
 
 class UserProfileSerializer(serializers.ModelSerializer):
-    """Serializer para el perfil general del usuario (UserProfile)."""
-    class Meta:
-        model = UserProfile
-        exclude = ['user']
+    class Meta: model = UserProfile; exclude = ['user']
 
-class ClienteProfileSerializer(serializers.ModelSerializer):
-    """Serializer para el perfil de Cliente."""
-    class Meta:
-        model = Cliente
-        exclude = ['user']
+# --- Serializers de Perfil para ESCRITURA (usados en la creación anidada) ---
+class VendedorProfileWriteSerializer(serializers.ModelSerializer):
+    class Meta: model = Vendedor; fields = ['fecha_contratacion', 'tasa_comision']
 
-class VendedorProfileSerializer(serializers.ModelSerializer):
-    """Serializer para el perfil de Vendedor."""
-    class Meta:
-        model = Vendedor
-        exclude = ['user']
+class AdministradorProfileWriteSerializer(serializers.ModelSerializer):
+    class Meta: model = Administrador; fields = ['departamento', 'fecha_contratacion']
 
-class AdministradorProfileSerializer(serializers.ModelSerializer):
-    """Serializer para el perfil de Administrador."""
-    class Meta:
-        model = Administrador
-        exclude = ['user']
+class ClienteProfileWriteSerializer(serializers.ModelSerializer):
+    class Meta: model = Cliente; fields = ['nivel_fidelidad', 'puntos_acumulados']
 
-# --- Serializer Principal para el Modelo User ---
+# --- Serializer Principal de User (corregido) ---
 class UserSerializer(serializers.ModelSerializer):
-    """
-    Serializer completo para el modelo User.
-    - Maneja la creación y actualización anidada de perfiles.
-    - Devuelve una representación limpia y útil del usuario y su rol/perfil.
-    - Controla la data que se envía para evitar sobrecarga (respuesta a "no mandar 3 tablas").
-    """
-    # --- Campos de solo lectura para una mejor representación en GET ---
+    rol_id = serializers.PrimaryKeyRelatedField(queryset=Rol.objects.all(), source='rol', write_only=True)
     rol = RolSerializer(read_only=True)
-    tienda_nombre = serializers.CharField(source='tienda.nombre', read_only=True, allow_null=True)
-
-    # --- Campos de solo escritura para recibir IDs en POST/PUT ---
-    rol_id = serializers.PrimaryKeyRelatedField(
-        queryset=Rol.objects.all(), source='rol', write_only=True
-    )
-    tienda_id = serializers.PrimaryKeyRelatedField(
-        queryset=Tienda.objects.all(), source='tienda', required=False, allow_null=True, write_only=True
-    )
-
-    # --- Campos de Perfiles Anidados ---
     profile = UserProfileSerializer()
-    cliente_profile = ClienteProfileSerializer(required=False, allow_null=True, write_only=True)
-    vendedor_profile = VendedorProfileSerializer(required=False, allow_null=True, write_only=True)
-    admin_profile = AdministradorProfileSerializer(required=False, allow_null=True, write_only=True)
+    tienda_id = serializers.PrimaryKeyRelatedField(queryset=Tienda.objects.all(), required=False, allow_null=True, write_only=True, source='tienda')
+
+    # Perfiles de solo escritura
+    vendedor_profile = VendedorProfileWriteSerializer(required=False, allow_null=True)
+    admin_profile = AdministradorProfileWriteSerializer(required=False, allow_null=True)
+    cliente_profile = ClienteProfileWriteSerializer(required=False, allow_null=True)
 
     class Meta:
         model = User
         fields = [
-            'id_usuario', 'email', 'password', 'rol', 'rol_id', 'tienda_id', 'tienda_nombre',
-            'is_active', 'fecha_creacion',
-            'profile', 'cliente_profile', 'vendedor_profile', 'admin_profile'
+            'id_usuario', 'email', 'password', 'rol', 'rol_id', 'tienda_id', 'is_active', 
+            'fecha_creacion', 'profile', 'vendedor_profile', 'admin_profile', 'cliente_profile'
         ]
-        extra_kwargs = {
-            'password': {'write_only': True},
-        }
+        extra_kwargs = {'password': {'write_only': True}}
 
     @transaction.atomic
     def create(self, validated_data):
-        """
-        Sobrescribe el método create para manejar la creación del usuario
-        y sus perfiles anidados de forma atómica.
-        """
         profile_data = validated_data.pop('profile')
-        cliente_data = validated_data.pop('cliente_profile', None)
-        vendedor_data = validated_data.pop('vendedor_profile', None)
-        admin_data = validated_data.pop('admin_profile', None)
         rol = validated_data.get('rol')
+        tienda = validated_data.pop('tienda', None) or self.context.get('tienda_forzada')
         
         user = User.objects.create_user(**validated_data)
         UserProfile.objects.create(user=user, **profile_data)
 
         if rol:
-            if rol.nombre == 'cliente' and cliente_data:
-                Cliente.objects.create(user=user, **cliente_data)
-            elif rol.nombre == 'vendedor' and vendedor_data:
-                Vendedor.objects.create(user=user, **vendedor_data)
-            elif rol.nombre == 'admin' and admin_data:
-                Administrador.objects.create(user=user, **admin_data)
-
+            if rol.nombre == 'vendedor':
+                if not tienda: raise serializers.ValidationError("Un Vendedor debe estar asociado a una tienda.")
+                Vendedor.objects.create(user=user, tienda=tienda, **(validated_data.pop('vendedor_profile', None) or {}))
+            elif rol.nombre == 'admin':
+                if not tienda: raise serializers.ValidationError("Un Administrador debe estar asociado a una tienda.")
+                Administrador.objects.create(user=user, tienda=tienda, **(validated_data.pop('admin_profile', None) or {}))
+            elif rol.nombre == 'cliente':
+                Cliente.objects.create(user=user, **(validated_data.pop('cliente_profile', None) or {}))
+                if tienda: tienda.clientes.add(user)
         return user
 
-    @transaction.atomic
-    def update(self, instance, validated_data):
-        profile_data = validated_data.pop('profile', None)
-        
-        if profile_data:
-            profile_serializer = self.fields['profile']
-            profile_instance = instance.profile
-            profile_serializer.update(profile_instance, profile_data)
-        
-        password = validated_data.pop('password', None)
-        if password:
-            instance.set_password(password)
-        
-        return super().update(instance, validated_data)
-        
     def to_representation(self, instance):
-        """
-        Controla la representación JSON de salida para mostrar el perfil
-        adecuado y limpiar los datos innecesarios.
-        """
         representation = super().to_representation(instance)
         rol_nombre = instance.rol.nombre if instance.rol else None
-
-        # Añadimos el perfil correspondiente al rol de forma limpia
-        if rol_nombre == 'cliente' and hasattr(instance, 'cliente_profile'):
-            representation['perfil_cliente'] = ClienteProfileSerializer(instance.cliente_profile).data
+        
+        tienda_data = None
+        if rol_nombre == 'admin' and hasattr(instance, 'admin_profile'):
+            tienda = instance.admin_profile.tienda
+            tienda_data = {'id': tienda.id, 'nombre': tienda.nombre}
         elif rol_nombre == 'vendedor' and hasattr(instance, 'vendedor_profile'):
-            representation['perfil_vendedor'] = VendedorProfileSerializer(instance.vendedor_profile).data
-        elif rol_nombre == 'admin' and hasattr(instance, 'admin_profile'):
-            representation['perfil_administrador'] = AdministradorProfileSerializer(instance.admin_profile).data
-
-        # Limpiamos los campos de solo escritura de la respuesta JSON
-        representation.pop('cliente_profile', None)
+            tienda = instance.vendedor_profile.tienda
+            tienda_data = {'id': tienda.id, 'nombre': tienda.nombre}
+        
+        representation['tienda'] = tienda_data
+        # Limpiamos los campos write_only de la respuesta
         representation.pop('vendedor_profile', None)
         representation.pop('admin_profile', None)
-            
+        representation.pop('cliente_profile', None)
         return representation
 
-# --- Serializers para Vistas de Lista/Detalle de Perfiles Específicos ---
-# Ideales para endpoints como /api/clientes/ donde se quiere ver todo.
+# --- Serializers de Detalle (para vistas de lista/detalle) ---
+class TiendaBasicSerializer(serializers.ModelSerializer):
+    class Meta: model = Tienda; fields = ['id', 'nombre']
+
+class UserBasicSerializer(serializers.ModelSerializer):
+    profile = UserProfileSerializer(read_only=True)
+    class Meta: model = User; fields = ['id_usuario', 'email', 'profile']
 
 class ClienteDetailSerializer(serializers.ModelSerializer):
-    user = UserSerializer(read_only=True) # Anidación controlada
-    class Meta:
-        model = Cliente
-        fields = '__all__'
+    user = UserBasicSerializer(read_only=True)
+    class Meta: model = Cliente; fields = '__all__'
 
 class VendedorDetailSerializer(serializers.ModelSerializer):
-    user = UserSerializer(read_only=True)
-    class Meta:
-        model = Vendedor
-        fields = '__all__'
+    user = UserBasicSerializer(read_only=True)
+    tienda = TiendaBasicSerializer(read_only=True)
+    class Meta: model = Vendedor; fields = '__all__'
 
 class AdministradorDetailSerializer(serializers.ModelSerializer):
-    user = UserSerializer(read_only=True)
-    class Meta:
-        model = Administrador
-        fields = '__all__'
+    user = UserBasicSerializer(read_only=True)
+    tienda = TiendaBasicSerializer(read_only=True)
+    class Meta: model = Administrador; fields = '__all__'

@@ -1,87 +1,94 @@
 import time
 import stripe
-import traceback
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from django.contrib.auth.hashers import make_password
+from django.contrib.auth import login
 from rest_framework import viewsets, permissions, status, mixins
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.response import Response
 from rest_framework.authtoken.models import Token
-from apps.auditoria.utils import log_action
-from django.contrib.auth import login
+from apps.users.utils import get_user_tienda
 
-from .models import PlanSuscripcion, Tienda, PagoSuscripcion
+from .models import PlanSuscripcion, Tienda, PagoSuscripcion, TiendaCliente
 from apps.users.models import Administrador, User, UserProfile, Rol
 from .serializers import (
     PlanSuscripcionSerializer, TiendaSerializer, PagoSuscripcionSerializer,
     TiendaDetailSerializer, RegistroSerializer
 )
-from config.pagination import CustomPageNumberPagination
 from apps.users.views import IsSuperAdmin
+from apps.auditoria.utils import log_action
+from config.pagination import CustomPageNumberPagination
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
-# --- ViewSets ---
 class PlanSuscripcionViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
     queryset = PlanSuscripcion.objects.all().order_by('precio_mensual')
     serializer_class = PlanSuscripcionSerializer
     permission_classes = [permissions.AllowAny]
 
 class TiendaViewSet(viewsets.ModelViewSet):
-    queryset = Tienda.objects.all().select_related('plan', 'admin_contacto', 'admin_contacto__profile')
+    queryset = Tienda.objects.all().select_related('plan', 'admin_contacto__profile')
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = CustomPageNumberPagination
     filter_backends = [SearchFilter, OrderingFilter]
     search_fields = ['nombre', 'plan__nombre', 'admin_contacto__email']
+    
     def get_serializer_class(self):
         if self.action in ['list', 'retrieve']: return TiendaDetailSerializer
         return TiendaSerializer
+
     def get_permissions(self):
         if self.action not in ['list', 'retrieve']: self.permission_classes = [IsSuperAdmin]
         return super().get_permissions()
+
     def get_queryset(self):
         user = self.request.user
         if not user.is_authenticated: return self.queryset.none()
         if user.rol and user.rol.nombre == 'superAdmin': return self.queryset
-        if user.tienda: return self.queryset.filter(id=user.tienda.id)
+        
+        tienda_actual = get_user_tienda(user)
+        if tienda_actual:
+            return self.queryset.filter(id=tienda_actual.id)
         return self.queryset.none()
 
 class PagoSuscripcionViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = PagoSuscripcion.objects.all()
+    queryset = PagoSuscripcion.objects.all().select_related('tienda', 'plan_pagado')
     serializer_class = PagoSuscripcionSerializer
     permission_classes = [permissions.IsAuthenticated]
+
     def get_queryset(self):
         user = self.request.user
         if not user.is_authenticated: return self.queryset.none()
         if user.rol and user.rol.nombre == 'superAdmin': return self.queryset
-        if user.tienda: return self.queryset.filter(tienda=user.tienda)
+        
+        tienda_actual = get_user_tienda(user)
+        if tienda_actual:
+            return self.queryset.filter(tienda=tienda_actual)
         return self.queryset.none()
 
-# --- Lógica de Registro ---
+# --- Lógica de Registro y Sesión ---
 
-@permission_classes([permissions.AllowAny])
-def _iniciar_sesion_y_crear_respuesta(request, user, log_message_prefix):
+def _iniciar_sesion_y_crear_respuesta(request, user, log_message):
     """
     Función centralizada que maneja el inicio de sesión, la creación de token,
-    el log y la construcción de la respuesta JSON completa.
+    el log con un mensaje personalizado y la construcción de la respuesta.
     """
-    login(request, user)  # Esto actualiza el campo last_login de Django
+    login(request, user)
     token, _ = Token.objects.get_or_create(user=user)
     
-    tienda_info = f" en Tienda: {user.tienda.nombre}" if user.tienda else ""
-    log_message = f"{log_message_prefix}{tienda_info}"
-    log_action(request, log_message, f"Usuario: {user.email}", user)
+    tienda_actual = get_user_tienda(user)
+    # El mensaje completo ahora se construye aquí
+    tienda_info = f" en Tienda: {tienda_actual.nombre}" if tienda_actual else ""
+    full_log_message = f"{log_message}{tienda_info}"
+    log_action(request, full_log_message, f"Usuario: {user.email}", user)
 
-    # Construimos la respuesta JSON estandarizada y completa
     response_data = {
-        'status': 'success',
-        'token': token.key,
-        'user_id': user.id_usuario,
+        'status': 'success', 'token': token.key, 'user_id': user.id_usuario,
         'rol': user.rol.nombre if user.rol else None,
-        'tienda_id': user.tienda.id if user.tienda else None,
+        'tienda_id': tienda_actual.id if tienda_actual else None,
         'nombre_completo': f"{user.profile.nombre} {user.profile.apellido}" if hasattr(user, 'profile') else 'N/A'
     }
     return response_data
@@ -100,18 +107,17 @@ def registro_directo_prueba(request):
             plan = PlanSuscripcion.objects.get(pk=data['plan_id'])
             if not plan.dias_prueba > 0:
                 return Response({"error": "Este endpoint es solo para planes de prueba."}, status=status.HTTP_400_BAD_REQUEST)
+            
             rol_admin, _ = Rol.objects.get_or_create(nombre='admin', defaults={'descripcion': 'Administrador de una tienda.'})
             admin_user = User.objects.create_user(email=data['admin_email'], password=data['admin_password'])
             UserProfile.objects.create(user=admin_user, nombre=data['admin_nombre'], apellido=data['admin_apellido'], ci=data['admin_ci'], telefono=data.get('admin_telefono', ''))
-            Administrador.objects.create(user=admin_user, fecha_contratacion=timezone.now().date())
             nueva_tienda = Tienda.objects.create(plan=plan, nombre=data['tienda_nombre'], admin_contacto=admin_user)
-            admin_user.tienda = nueva_tienda
+            Administrador.objects.create(user=admin_user, tienda=nueva_tienda, fecha_contratacion=timezone.now().date())
             admin_user.rol = rol_admin
             admin_user.save()
             return Response({"message": "¡Tienda de prueba creada exitosamente!", "tienda_id": nueva_tienda.id, "user_id": admin_user.id_usuario}, status=status.HTTP_201_CREATED)
     except Exception as e:
         return Response({"error": f"Ocurrió un error inesperado: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
 # --- Flujo de Pago con Stripe (Sin Webhooks) ---
 
 @api_view(['POST'])
@@ -171,21 +177,15 @@ def confirmar_registro_pago(request):
             )
 
             if not created:
-                # ===============================================================
-                # CORRECCIÓN: Si el usuario ya existía, llamamos a la función auxiliar
-                # para obtener la respuesta COMPLETA.
-                # ===============================================================
-                response_data = _iniciar_sesion_y_crear_respuesta(request, admin_user, "Inicio de sesión post-registro (usuario ya existía)")
+                response_data = _iniciar_sesion_y_crear_respuesta(request, admin_user, "Inicio de sesión post-registro de la tienda")
                 response_data['message'] = 'El usuario ya fue registrado en una petición anterior.'
                 return Response(response_data)
             
-            # Si es nuevo, creamos todo...
             plan = PlanSuscripcion.objects.get(pk=metadata['plan_id'])
             UserProfile.objects.create(user=admin_user, nombre=metadata['admin_nombre'], apellido=metadata['admin_apellido'], ci=metadata['admin_ci'], telefono=metadata.get('admin_telefono', ''))
-            Administrador.objects.create(user=admin_user, fecha_contratacion=timezone.now().date())
             nueva_tienda = Tienda.objects.create(plan=plan, nombre=metadata['tienda_nombre'], admin_contacto=admin_user)
+            Administrador.objects.create(user=admin_user, tienda=nueva_tienda, fecha_contratacion=timezone.now().date())
             
-            admin_user.tienda = nueva_tienda
             admin_user.rol = rol_admin
             admin_user.save()
 
@@ -196,11 +196,10 @@ def confirmar_registro_pago(request):
                 estado='PAGADO', fecha_pago=timezone.now()
             )
             
-            # ===============================================================
-            # CORRECCIÓN: Al final, también llamamos a la función auxiliar
-            # para obtener la respuesta COMPLETA y consistente.
-            # ===============================================================
-            response_data = _iniciar_sesion_y_crear_respuesta(request, admin_user, "Registro y primer inicio de sesión vía Stripe")
+            tienda_info = f" en Tienda: {nueva_tienda.nombre}"
+            log_action(request, f"Se realizó el pago y activación de la tienda{tienda_info}", f"Usuario: {admin_user.email}", admin_user)
+
+            response_data = _iniciar_sesion_y_crear_respuesta(request, admin_user, "Registro de tienda exitoso")
             return Response(response_data)
 
     except Exception as e:

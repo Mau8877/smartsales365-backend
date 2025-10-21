@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.authtoken.models import Token
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django.contrib.auth import authenticate, login
+from .utils import get_user_tienda
 
 from .models import User, Rol, Cliente, Vendedor, Administrador
 from .serializers import (
@@ -14,13 +15,11 @@ from .serializers import (
 from apps.auditoria.utils import log_action
 from config.pagination import CustomPageNumberPagination
 
-# --- Permisos Personalizados ---
 class IsSuperAdmin(permissions.BasePermission):
     """Permite el acceso solo a usuarios con el rol de superAdmin."""
     def has_permission(self, request, view):
         return request.user.is_authenticated and request.user.rol and request.user.rol.nombre == 'superAdmin'
 
-# --- ViewSet Base para la Lógica Multi-Tenant ---
 class TenantAwareViewSet(viewsets.ModelViewSet):
     """
     Un ViewSet base que filtra el queryset para la tienda del usuario actual.
@@ -32,24 +31,17 @@ class TenantAwareViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         queryset = super().get_queryset()
+        if not user.is_authenticated: return queryset.none()
+        if user.rol and user.rol.nombre == 'superAdmin': return queryset
         
-        if not user.is_authenticated:
-            return queryset.none()
-
-        if user.rol and user.rol.nombre == 'superAdmin':
-            return queryset
-            
-        if user.tienda:
-            # Filtra perfiles (Vendedor, Administrador) por la tienda del usuario a través del campo 'user'
-            if hasattr(self.queryset.model, 'user'):
-                return queryset.filter(user__tienda=user.tienda)
-        
+        tienda_actual = get_user_tienda(user)
+        if tienda_actual:
+            return queryset.filter(tienda=tienda_actual)
         return queryset.none()
 
-# --- ViewSets de Users ---
 class UserViewSet(viewsets.ModelViewSet):
     """Gestión de usuarios y autenticación, adaptado para SaaS."""
-    queryset = User.objects.all().select_related('rol', 'profile', 'tienda')
+    queryset = User.objects.all().select_related('rol', 'profile').prefetch_related('admin_profile__tienda', 'vendedor_profile__tienda')
     serializer_class = UserSerializer
     pagination_class = CustomPageNumberPagination
     filter_backends = [OrderingFilter, SearchFilter]
@@ -64,30 +56,32 @@ class UserViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         queryset = super().get_queryset()
-
-        if not user.is_authenticated:
-            return queryset.none()
-            
-        if user.rol and user.rol.nombre == 'superAdmin':
-            return queryset
-            
-        if user.tienda:
-            # Un admin/vendedor ve a todos los usuarios de su tienda
-            return queryset.filter(tienda=user.tienda)
-            
+        if not user.is_authenticated: return queryset.none()
+        if user.rol and user.rol.nombre == 'superAdmin': return queryset
+        
+        tienda_actual = get_user_tienda(user)
+        if tienda_actual:
+            return queryset.filter(
+                Q(admin_profile__tienda=tienda_actual) |
+                Q(vendedor_profile__tienda=tienda_actual) |
+                Q(tiendas_como_cliente=tienda_actual) 
+            ).distinct()
         return queryset.none()
+    
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        if self.action == 'create':
+            actor = self.request.user
+            if actor.is_authenticated and actor.rol.nombre != 'superAdmin':
+                context['tienda_forzada'] = get_user_tienda(actor)
+        return context
 
     def perform_create(self, serializer):
-        actor = self.request.user
-        tienda_a_asignar = None
-
-        if actor.is_authenticated and actor.rol.nombre != 'superAdmin' and actor.tienda:
-            tienda_a_asignar = actor.tienda
-        
-        user_obj = serializer.save(tienda=tienda_a_asignar)
-        
+        user_obj = serializer.save()
         user_nombre = user_obj.profile.nombre if hasattr(user_obj, 'profile') else user_obj.email
-        tienda_info = f" en Tienda: {actor.tienda.nombre} (ID: {actor.tienda.id})" if actor.is_authenticated and actor.tienda else ""
+        actor = self.request.user
+        tienda_actor = get_user_tienda(actor)
+        tienda_info = f" en Tienda: {tienda_actor.nombre}" if actor.is_authenticated and tienda_actor else ""
         log_action(request=self.request, accion=f"Creó usuario {user_nombre}{tienda_info}", objeto=f"Usuario: {user_nombre} (id:{user_obj.id_usuario})", usuario=actor if actor.is_authenticated else None)
 
     @action(detail=False, methods=['post'], permission_classes=[AllowAny])
@@ -102,24 +96,25 @@ class UserViewSet(viewsets.ModelViewSet):
             if not user.puede_acceder_sistema():
                 return Response({"error": "Tu rol no tiene acceso activo al sistema."}, status=status.HTTP_403_FORBIDDEN)
 
-            login(request, user) # Actualiza el campo last_login
-
+            login(request, user)
             token, _ = Token.objects.get_or_create(user=user)
             
+            tienda_actual = get_user_tienda(user)
             if user.rol and user.rol.nombre == 'superAdmin':
                 loginfo = " (Global - SuperAdmin)"
-            elif user.tienda:  # Más simple: solo pregunta si el usuario pertenece a una tienda
-                loginfo = f" en Tienda: {user.tienda.nombre} (ID: {user.tienda.id})"
+            elif tienda_actual:
+                loginfo = f" en Tienda: {tienda_actual.nombre} (ID: {tienda_actual.id})"
             else:
-                loginfo = f" Cliente (ID:{user.user_id})"  # Cualquier otro rol sin tienda (como 'cliente') caerá aquí
+                loginfo = ""
 
             log_action(request, f"Inicio de sesión{loginfo}", f"Usuario: {email}", user)
+
             return Response({
                 "message": "Login exitoso",
                 "token": token.key,
                 "user_id": user.id_usuario,
                 "rol": user.rol.nombre if user.rol else None,
-                "tienda_id": user.tienda.id if user.tienda else None,
+                "tienda_id": tienda_actual.id if tienda_actual else None,
                 "nombre_completo": f"{user.profile.nombre} {user.profile.apellido}" if hasattr(user, 'profile') else 'N/A'
             }, status=status.HTTP_200_OK)
         
@@ -127,14 +122,12 @@ class UserViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
     def logout(self, request):
-        try:
-            user = request.user
-            tienda_info = f" de Tienda: {user.tienda.nombre} (ID: {user.tienda.id})" if user.tienda else ""
-            log_action(request=request, accion=f"Cierre de sesión del usuario (id:{user.id_usuario}){tienda_info}", objeto=f"Usuario: {user.email}", usuario=user)
-            Token.objects.filter(user=user).delete()
-            return Response({"message": "Cierre de sesión exitoso"}, status=status.HTTP_200_OK)
-        except Exception as e:
-            return Response({"error": f"Ocurrió un error al cerrar sesión: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        user = request.user
+        tienda_actual = get_user_tienda(user)
+        tienda_info = f" de Tienda: {tienda_actual.nombre}" if tienda_actual else ""
+        log_action(request=request, accion=f"Cierre de sesión{tienda_info}", usuario=user)
+        Token.objects.filter(user=user).delete()
+        return Response({"message": "Cierre de sesión exitoso"}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def cambiar_password(self, request, pk=None):
@@ -152,7 +145,8 @@ class UserViewSet(viewsets.ModelViewSet):
         nombre = instance.email
         pk = instance.pk
         actor = self.request.user
-        tienda_info = f" de Tienda: {actor.tienda.nombre} (ID: {actor.tienda.id})" if actor and actor.tienda else ""
+        tienda_actor = get_user_tienda(actor)
+        tienda_info = f" de Tienda: {tienda_actor.nombre}" if actor.is_authenticated and tienda_actor else ""
         instance.delete()
         log_action(request=self.request, accion=f"Eliminó usuario {nombre} (id:{pk}){tienda_info}", objeto=f"Usuario: {nombre} (id:{pk})", usuario=actor)
 
@@ -160,7 +154,8 @@ class UserViewSet(viewsets.ModelViewSet):
         user_obj = serializer.save() 
         user_nombre = user_obj.profile.nombre if hasattr(user_obj, 'profile') else user_obj.email
         actor = self.request.user
-        tienda_info = f" en Tienda: {actor.tienda.nombre} (ID: {actor.tienda.id})" if actor and actor.tienda else ""
+        tienda_actor = get_user_tienda(actor)
+        tienda_info = f" en Tienda: {tienda_actor.nombre}" if actor.is_authenticated and tienda_actor else ""
         log_action(request=self.request, accion=f"Actualizó usuario {user_nombre} (id:{user_obj.id_usuario}){tienda_info}", objeto=f"Usuario: {user_nombre} (id:{user_obj.id_usuario})", usuario=actor)
 
 
@@ -191,19 +186,30 @@ class RolViewSet(viewsets.ModelViewSet):
 
 
 class ClienteViewSet(viewsets.ModelViewSet):
-    """Gestión de perfiles de Clientes (Solo SuperAdmin los gestiona a nivel global)."""
-    queryset = Cliente.objects.all().select_related('user', 'user__profile')
+    """Gestión de perfiles de Clientes."""
+    queryset = Cliente.objects.all().select_related('user__profile', 'user__rol')
     serializer_class = ClienteDetailSerializer
-    permission_classes = [IsAuthenticated, IsSuperAdmin] # Solo SuperAdmin puede ver/gestionar todos los clientes
+    permission_classes = [IsAuthenticated]
     pagination_class = CustomPageNumberPagination
     filter_backends = [SearchFilter, OrderingFilter]
     search_fields = ['nivel_fidelidad', 'user__email', 'user__profile__nombre', 'user__profile__apellido']
     ordering_fields = ['nivel_fidelidad', 'puntos_acumulados', 'user__email']
 
+    def get_queryset(self):
+        user = self.request.user
+        queryset = super().get_queryset()
+        if not user.is_authenticated: return queryset.none()
+        if user.rol and user.rol.nombre == 'superAdmin': return queryset
+        
+        tienda_actual = get_user_tienda(user)
+        if tienda_actual:
+            return queryset.filter(user__tiendas_como_cliente=tienda_actual)
+        return queryset.none()
+
 
 class VendedorViewSet(TenantAwareViewSet):
     """Gestión de perfiles de Vendedores, filtrado por tienda."""
-    queryset = Vendedor.objects.all().select_related('user', 'user__profile', 'user__tienda')
+    queryset = Vendedor.objects.all().select_related('user__profile', 'user__rol', 'tienda')
     serializer_class = VendedorDetailSerializer
     filter_backends = [SearchFilter, OrderingFilter]
     search_fields = ['user__email', 'user__profile__nombre', 'tasa_comision']
@@ -212,26 +218,29 @@ class VendedorViewSet(TenantAwareViewSet):
     def perform_create(self, serializer):
         vendedor_obj = serializer.save()
         actor = self.request.user
-        tienda_info = f" en Tienda: {actor.tienda.nombre} (ID: {actor.tienda.id})" if actor.tienda else ""
+        tienda_actor = get_user_tienda(actor)
+        tienda_info = f" en Tienda: {tienda_actor.nombre} (ID: {tienda_actor.id})" if tienda_actor else ""
         log_action(request=self.request, accion=f"Creó perfil de Vendedor para {vendedor_obj.user.email}{tienda_info}", objeto=f"Vendedor: {vendedor_obj.user.email}", usuario=actor)
 
     def perform_destroy(self, instance):
         email = instance.user.email 
         actor = self.request.user
-        tienda_info = f" de Tienda: {actor.tienda.nombre} (ID: {actor.tienda.id})" if actor.tienda else ""
+        tienda_actor = get_user_tienda(actor)
+        tienda_info = f" de Tienda: {tienda_actor.nombre} (ID: {tienda_actor.id})" if tienda_actor else ""
         instance.delete()
         log_action(request=self.request, accion=f"Eliminó perfil de Vendedor {email}{tienda_info}", objeto=f"Vendedor: {email}", usuario=actor)
 
     def perform_update(self, serializer):
         vendedor_obj = serializer.save()
         actor = self.request.user
-        tienda_info = f" en Tienda: {actor.tienda.nombre} (ID: {actor.tienda.id})" if actor.tienda else ""
+        tienda_actor = get_user_tienda(actor)
+        tienda_info = f" en Tienda: {tienda_actor.nombre} (ID: {tienda_actor.id})" if tienda_actor else ""
         log_action(request=self.request, accion=f"Actualizó perfil de Vendedor {vendedor_obj.user.email}{tienda_info}", objeto=f"Vendedor: {vendedor_obj.user.email}", usuario=actor)
 
 
 class AdministradorViewSet(TenantAwareViewSet):
     """Gestión de perfiles de Administradores, filtrado por tienda."""
-    queryset = Administrador.objects.all().select_related('user', 'user__profile', 'user__tienda')
+    queryset = Administrador.objects.all().select_related('user__profile', 'user__rol', 'tienda')
     serializer_class = AdministradorDetailSerializer
     filter_backends = [SearchFilter, OrderingFilter]
     search_fields = ['departamento', 'user__email', 'user__profile__nombre']
@@ -240,19 +249,21 @@ class AdministradorViewSet(TenantAwareViewSet):
     def perform_create(self, serializer):
         admin_obj = serializer.save()
         actor = self.request.user
-        tienda_info = f" en Tienda: {actor.tienda.nombre} (ID: {actor.tienda.id})" if actor.tienda else ""
+        tienda_actor = get_user_tienda(actor)
+        tienda_info = f" en Tienda: {tienda_actor.nombre} (ID: {tienda_actor.id})" if tienda_actor else ""
         log_action(request=self.request, accion=f"Creó perfil de Admin para {admin_obj.user.email}{tienda_info}", objeto=f"Administrador: {admin_obj.user.email}", usuario=actor)
 
     def perform_destroy(self, instance):
         email = instance.user.email
         actor = self.request.user
-        tienda_info = f" de Tienda: {actor.tienda.nombre} (ID: {actor.tienda.id})" if actor.tienda else ""
+        tienda_actor = get_user_tienda(actor)
+        tienda_info = f" de Tienda: {tienda_actor.nombre} (ID: {tienda_actor.id})" if tienda_actor else ""
         instance.delete()
         log_action(request=self.request, accion=f"Eliminó perfil de Admin {email}{tienda_info}", objeto=f"Administrador: {email}", usuario=actor)
 
     def perform_update(self, serializer):
         admin_obj = serializer.save()
         actor = self.request.user
-        tienda_info = f" en Tienda: {actor.tienda.nombre} (ID: {actor.tienda.id})" if actor.tienda else ""
+        tienda_actor = get_user_tienda(actor)
+        tienda_info = f" en Tienda: {tienda_actor.nombre} (ID: {tienda_actor.id})" if tienda_actor else ""
         log_action(request=self.request, accion=f"Actualizó perfil de Admin {admin_obj.user.email}{tienda_info}", objeto=f"Administrador: {admin_obj.user.email}", usuario=actor)
-
