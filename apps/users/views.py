@@ -124,8 +124,15 @@ class UserViewSet(viewsets.ModelViewSet):
     def logout(self, request):
         user = request.user
         tienda_actual = get_user_tienda(user)
-        tienda_info = f" de Tienda: {tienda_actual.nombre}" if tienda_actual else ""
-        log_action(request=request, accion=f"Cierre de sesión{tienda_info}", usuario=user)
+
+        if user.rol and user.rol.nombre == 'superAdmin':
+            loginfo = " (Global - SuperAdmin)"
+        elif tienda_actual:
+            loginfo = f" en Tienda: {tienda_actual.nombre} (ID: {tienda_actual.id})"
+        else:
+            loginfo = ""
+
+        log_action(request=request, accion=f"Cierre de sesión{loginfo}", objeto=f"Usuario: {user.email}", usuario=user)
         Token.objects.filter(user=user).delete()
         return Response({"message": "Cierre de sesión exitoso"}, status=status.HTTP_200_OK)
 
@@ -170,19 +177,34 @@ class RolViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         rol_obj = serializer.save()
         actor = self.request.user
-        log_action(request=self.request, accion=f"Creó Rol {rol_obj.nombre}", objeto=f"Rol: {rol_obj.nombre} (id:{rol_obj.id})", usuario=actor)
+        log_action(
+            request=self.request, 
+            accion=f"Creó Rol {rol_obj.nombre}", 
+            objeto=f"Rol: {rol_obj.nombre} (id:{rol_obj.id})", 
+            usuario=actor
+        )
 
     def perform_destroy(self, instance):
         nombre = instance.nombre
         pk = instance.pk
         actor = self.request.user
         instance.delete()
-        log_action(request=self.request, accion=f"Eliminó Rol {nombre} (id:{pk})", objeto=f"Rol: {nombre} (id:{pk})", usuario=actor)
+        log_action(
+            request=self.request, 
+            accion=f"Eliminó Rol {nombre} (id:{pk})", 
+            objeto=f"Rol: {nombre} (id:{pk})", 
+            usuario=actor
+        )
 
     def perform_update(self, serializer):
         rol_obj = serializer.save()
         actor = self.request.user
-        log_action(request=self.request, accion=f"Actualizó Rol {rol_obj.nombre}", objeto=f"Rol: {rol_obj.nombre} (id:{rol_obj.id})", usuario=actor)
+        log_action(
+            request=self.request, 
+            accion=f"Actualizó Rol {rol_obj.nombre}", 
+            objeto=f"Rol: {rol_obj.nombre} (id:{rol_obj.id})", 
+            usuario=actor
+        )
 
 
 class ClienteViewSet(viewsets.ModelViewSet):

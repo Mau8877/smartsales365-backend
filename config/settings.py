@@ -62,6 +62,7 @@ REST_FRAMEWORK = {
     ),
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
+        'apps.saas.permissions.IsTenantActive',
     ],
     'DATETIME_FORMAT': "%Y-%m-%d %H:%M:%S %z", 
     'DATETIME_INPUT_FORMATS': ['iso-8601'], 

@@ -1,5 +1,6 @@
 import time
 import stripe
+from django.db.utils import IntegrityError
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
@@ -110,16 +111,57 @@ def registro_directo_prueba(request):
             
             rol_admin, _ = Rol.objects.get_or_create(nombre='admin', defaults={'descripcion': 'Administrador de una tienda.'})
             admin_user = User.objects.create_user(email=data['admin_email'], password=data['admin_password'])
-            UserProfile.objects.create(user=admin_user, nombre=data['admin_nombre'], apellido=data['admin_apellido'], ci=data['admin_ci'], telefono=data.get('admin_telefono', ''))
+            UserProfile.objects.create(
+                user=admin_user,
+                nombre=data['admin_nombre'],
+                apellido=data['admin_apellido'],
+                ci=data['admin_ci'],
+                telefono=data.get('admin_telefono', '')
+            )
             nueva_tienda = Tienda.objects.create(plan=plan, nombre=data['tienda_nombre'], admin_contacto=admin_user)
-            Administrador.objects.create(user=admin_user, tienda=nueva_tienda, fecha_contratacion=timezone.now().date())
+            Administrador.objects.create(
+                user=admin_user,
+                tienda=nueva_tienda,
+                fecha_contratacion=timezone.now().date()
+            )
             admin_user.rol = rol_admin
             admin_user.save()
-            return Response({"message": "¡Tienda de prueba creada exitosamente!", "tienda_id": nueva_tienda.id, "user_id": admin_user.id_usuario}, status=status.HTTP_201_CREATED)
-    except Exception as e:
-        return Response({"error": f"Ocurrió un error inesperado: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-# --- Flujo de Pago con Stripe (Sin Webhooks) ---
 
+            log_action(
+                request,
+                f"Registro de tienda de prueba exitoso en Tienda: {nueva_tienda.nombre}",
+                f"Usuario: {admin_user.email}",
+                admin_user
+            )
+
+            return Response({
+                "message": "¡Tienda de prueba creada exitosamente!",
+                "tienda_id": nueva_tienda.id,
+                "user_id": admin_user.id_usuario
+            }, status=status.HTTP_201_CREATED)
+
+    except IntegrityError as e:
+        if 'unique constraint' in str(e).lower() or 'duplicate key' in str(e).lower():
+            # ✅ Usuario ya fue creado (probablemente en paralelo)
+            existing_user = User.objects.filter(email=data['admin_email']).first()
+            if existing_user:
+                log_action(
+                    request,
+                    "Intento de creación duplicado detectado, usuario ya existente.",
+                    f"Usuario: {existing_user.email}",
+                    existing_user
+                )
+                return Response({
+                    "message": "El usuario ya fue registrado recientemente. Puedes iniciar sesión.",
+                    "user_id": existing_user.id_usuario
+                }, status=status.HTTP_200_OK)
+        # otros errores de integridad se propagan normalmente
+        raise
+
+    except Exception as e:
+        return Response({"error": f"Ocurrió un error inesperado: {str(e)}"},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
 @api_view(['POST'])
 @permission_classes([permissions.AllowAny])
 def crear_sesion_pago_stripe(request):

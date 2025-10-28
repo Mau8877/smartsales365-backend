@@ -5,10 +5,14 @@ from .models import User, Rol, UserProfile, Cliente, Vendedor, Administrador
 
 # --- Serializers de base (sin cambios) ---
 class RolSerializer(serializers.ModelSerializer):
-    class Meta: model = Rol; fields = ['id', 'nombre', 'descripcion', 'estado']
+    class Meta: 
+        model = Rol; 
+        fields = ['id', 'nombre', 'descripcion', 'estado']
 
 class UserProfileSerializer(serializers.ModelSerializer):
-    class Meta: model = UserProfile; exclude = ['user']
+    class Meta: 
+        model = UserProfile; 
+        exclude = ['user']
 
 # --- Serializers de Perfil para ESCRITURA (usados en la creación anidada) ---
 class VendedorProfileWriteSerializer(serializers.ModelSerializer):
