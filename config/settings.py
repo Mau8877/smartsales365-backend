@@ -52,6 +52,8 @@ INSTALLED_APPS = [
     'rest_framework',
     'corsheaders',
     'rest_framework.authtoken',
+    'cloudinary_storage',
+    'cloudinary',        
 ]
 
 AUTH_USER_MODEL = 'users.User'
@@ -202,9 +204,20 @@ USE_TZ = True
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles' 
 
-# Archivos de MEDIOS (Subidos por el usuario, como la foto_perfil)
-MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+# Imagenes en la nube
+CLOUDINARY_STORAGE = {
+    'CLOUD_NAME': os.environ.get('CLOUDIRAY_NAME'),
+    'API_KEY': os.environ.get('CLOUDIRAY_API_KEY'),
+    'API_SECRET': os.environ.get('CLOUDIRAY_API_SECRET'),
+}
+
+# --- ESTA ES LA MAGIA ---
+# Le dice a Django que use Cloudinary para CUALQUIER
+# archivo que se suba a través de un ImageField o FileField.
+DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
+
+# (Opcional pero recomendado: usa Cloudinary para tus 'static' también)
+# STATICFILES_STORAGE = 'cloudinary_storage.storage.StaticHashedCloudinaryStorage'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

@@ -2,15 +2,19 @@ from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.authtoken.models import Token
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django.contrib.auth import authenticate, login
+from django.db.models import Q
 from .utils import get_user_tienda
 
-from .models import User, Rol, Cliente, Vendedor, Administrador
+from .models import User, Rol, Cliente, Vendedor, Administrador, UserProfile
 from .serializers import (
     UserSerializer, RolSerializer, ClienteDetailSerializer, 
-    VendedorDetailSerializer, AdministradorDetailSerializer
+    VendedorDetailSerializer, AdministradorDetailSerializer,
+    UserProfileUpdateSerializer, ChangePasswordSerializer,
+    UserPhotoSerializer,
 )
 from apps.auditoria.utils import log_action
 from config.pagination import CustomPageNumberPagination
@@ -51,8 +55,10 @@ class UserViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ['create', 'login']:
             return [AllowAny()]
+        if self.action in ['me', 'logout', 'cambiar_password', 'change_my_password']:
+             return [IsAuthenticated()]
         return [IsAuthenticated()]
-
+    
     def get_queryset(self):
         user = self.request.user
         queryset = super().get_queryset()
@@ -75,6 +81,174 @@ class UserViewSet(viewsets.ModelViewSet):
             if actor.is_authenticated and actor.rol.nombre != 'superAdmin':
                 context['tienda_forzada'] = get_user_tienda(actor)
         return context
+
+    # --- ACCIÓN "ME" (GET Y PATCH PARA DATOS DE PERFIL) ---
+    @action(
+        detail=False, 
+        methods=['get', 'patch'], 
+        permission_classes=[IsAuthenticated],
+        url_path='me'  # /api/users/me/
+    )
+    def me(self, request, *args, **kwargs):
+        """
+        Endpoint para OBTENER (GET) o ACTUALIZAR (PATCH) 
+        el perfil del usuario actualmente autenticado.
+        (Email y datos de UserProfile).
+        """
+        user = request.user 
+
+        if request.method == 'GET':
+            # GET: Devuelve el perfil completo del usuario
+            serializer = self.get_serializer(user, context=self.get_serializer_context())
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        if request.method == 'PATCH':
+            # PATCH: Actualiza usando el serializador restringido
+            serializer = UserProfileUpdateSerializer(
+                user, 
+                data=request.data, 
+                partial=True,
+                context=self.get_serializer_context()
+            )
+
+            if serializer.is_valid():
+                # Validación de email duplicado
+                new_email = serializer.validated_data.get('email')
+                if new_email and new_email != user.email:
+                    if User.objects.filter(email=new_email).exclude(pk=user.pk).exists():
+                        return Response(
+                            {'email': ['Este correo electrónico ya está en uso.']},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                
+                user_obj = serializer.save()
+                user_nombre = user_obj.profile.nombre if hasattr(user_obj, 'profile') else user_obj.email
+                
+                log_action(
+                    request=request, 
+                    accion="Actualizó su propio perfil (datos)", 
+                    objeto=f"Usuario: {user_nombre} (id:{user_obj.id_usuario})", 
+                    usuario=user
+                )
+                
+                # Devolvemos los datos actualizados usando el serializador completo
+                full_data_serializer = self.get_serializer(user_obj, context=self.get_serializer_context())
+                return Response(full_data_serializer.data, status=status.HTTP_200_OK)
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    # --- CAMBIAR MI PROPIA CONTRASEÑA ---
+    @action(
+        detail=False, 
+        methods=['post'], 
+        permission_classes=[IsAuthenticated],
+        url_path='me/change-password' # /api/users/me/change-password/
+    )
+    def change_my_password(self, request, *args, **kwargs):
+        """
+        Permite al usuario autenticado cambiar su propia contraseña.
+        Requiere 'old_password' y 'new_password'.
+        """
+        user = request.user
+        
+        # Pasamos el 'request' al contexto para que el serializer pueda acceder al 'user'
+        serializer = ChangePasswordSerializer(data=request.data, context={'request': request})
+        
+        if serializer.is_valid():
+            # El serializador ya validó la 'old_password'.
+            # Ahora solo establecemos la nueva.
+            new_password = serializer.validated_data['new_password']
+            user.set_password(new_password)
+            user.save()
+            
+            # Invalidar todos los tokens (buena práctica de seguridad)
+            Token.objects.filter(user=user).delete()
+            
+            # Registrar en auditoría
+            log_action(
+                request=request,
+                accion="Cambió su propia contraseña",
+                objeto=f"Usuario: {user.email} (id:{user.id_usuario})",
+                usuario=user
+            )
+            
+            return Response(
+                {'message': 'Contraseña actualizada exitosamente. Se ha cerrado la sesión en todos los dispositivos.'}, 
+                status=status.HTTP_200_OK
+            )
+        
+        # Si el serializador no es válido (ej. old_password incorrecta)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    # --- CAMBIAR CONTRASEÑA DE OTRO (ADMIN) ---
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def cambiar_password(self, request, pk=None):
+        """
+        Esta acción permite a un usuario
+        cambiar la contraseña de OTRO usuario por ID.
+        No requiere la contraseña antigua.
+        """
+        user = self.get_object() 
+        nuevo_password = request.data.get('password')
+        if not nuevo_password:
+            return Response({'error': 'La nueva contraseña es requerida'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # NOTA: Sería bueno añadir un permiso aquí
+        # if not request.user.is_staff:
+        #    return Response({'error': 'No autorizado'}, status=status.HTTP_403_FORBIDDEN)
+
+        user.set_password(nuevo_password)
+        user.save()
+        Token.objects.filter(user=user).delete()
+        log_action(request=request, accion=f"Cambió la contraseña del usuario (id:{user.id_usuario})", objeto=f"Usuario: {user.email}", usuario=request.user)
+        return Response({'message': 'Contraseña actualizada. Se requiere un nuevo login.'}, status=status.HTTP_200_OK)
+
+    # --- (ACCIÓN FINAL) SUBIR FOTO DE PERFIL A CLOUDINARY ---
+    @action(
+        detail=False, 
+        methods=['post'], 
+        permission_classes=[IsAuthenticated],
+        parser_classes=[MultiPartParser, FormParser], # Espera 'multipart/form-data'
+        url_path='me/upload-photo'
+    )
+    def upload_my_photo(self, request, *args, **kwargs):
+        """
+        Sube o actualiza la foto de perfil del usuario.
+        Gracias a django-cloudinary-storage, el archivo
+        se envía directamente a Cloudinary al hacer .save().
+        """
+        
+        # 1. Obtener el perfil
+        try:
+            profile = request.user.profile
+        except UserProfile.DoesNotExist:
+            return Response(
+                {"error": "El usuario no tiene un perfil para asignarle una foto."}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # 2. Validar el archivo con el serializador
+        #    (No es necesario verificar request.FILES, el serializer lo hace)
+        serializer = UserPhotoSerializer(profile, data=request.data, partial=True)
+
+        if serializer.is_valid():
+            # 3. Este .save() ahora habla con Cloudinary,
+            # sube el archivo y guarda la referencia en la BD.
+            serializer.save()
+            
+            log_action(
+                request=request, 
+                accion="Actualizó su foto de perfil (Cloudinary)", 
+                objeto=f"Usuario: {request.user.email}", 
+                usuario=request.user
+            )
+            
+            # 4. Devolvemos el serializador.
+            #    El campo 'foto_perfil' ahora tendrá la URL de Cloudinary.
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        
+        # Si no es un archivo válido
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def perform_create(self, serializer):
         user_obj = serializer.save()
@@ -136,7 +310,7 @@ class UserViewSet(viewsets.ModelViewSet):
         Token.objects.filter(user=user).delete()
         return Response({"message": "Cierre de sesión exitoso"}, status=status.HTTP_200_OK)
 
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsSuperAdmin])
     def cambiar_password(self, request, pk=None):
         user = self.get_object() 
         nuevo_password = request.data.get('password')

@@ -105,3 +105,94 @@ class AdministradorDetailSerializer(serializers.ModelSerializer):
     user = UserBasicSerializer(read_only=True)
     tienda = TiendaBasicSerializer(read_only=True)
     class Meta: model = Administrador; fields = '__all__'
+
+# --- SERIALIZERS PARA EDITAR PERFIL ---
+# --- SERIALIZADOR 1: Solo los campos del perfil anidado ---
+class ProfileDataSerializer(serializers.ModelSerializer):
+    """
+    Serializador anidado que SOLO contiene los campos que el usuario
+    puede editar de su UserProfile.
+    """
+    class Meta:
+        model = UserProfile
+        fields = (
+            'ci', 
+            'nombre', 
+            'apellido', 
+            'direccion', 
+            'fecha_nacimiento', 
+            'telefono', 
+            'genero'
+        )
+
+# --- SERIALIZADOR 2: Para actualizar el perfil (email + datos) ---
+class UserProfileUpdateSerializer(serializers.ModelSerializer):
+    """
+    Serializador principal para la acción "me" (PATCH).
+    Permite actualizar 'email' y los datos anidados de 'profile'.
+    OMITE 'rol' y otros campos sensibles.
+    """
+    profile = ProfileDataSerializer()
+
+    class Meta:
+        model = User
+        fields = ('email', 'profile')
+
+    def update(self, instance, validated_data):
+        # 1. Actualizar datos del UserProfile anidado
+        profile_data = validated_data.pop('profile', None)
+        
+        if profile_data and hasattr(instance, 'profile'):
+            profile_instance = instance.profile
+            for attr, value in profile_data.items():
+                setattr(profile_instance, attr, value)
+            profile_instance.save()
+
+        # 2. Actualizar 'email' del User (si se proporcionó)
+        instance.email = validated_data.get('email', instance.email)
+        instance.save()
+
+        return instance
+
+# --- SERIALIZADOR 3: Para cambiar la contraseña del propio usuario ---
+class ChangePasswordSerializer(serializers.Serializer):
+    """
+    Serializador para el cambio de contraseña del propio usuario.
+    Valida la contraseña antigua antes de permitir el cambio.
+    """
+    old_password = serializers.CharField(required=True, write_only=True, style={'input_type': 'password'})
+    new_password = serializers.CharField(required=True, write_only=True, style={'input_type': 'password'})
+
+    def validate_old_password(self, value):
+        """
+        Valida que la contraseña antigua (old_password) sea correcta.
+        """
+        # Obtenemos el usuario del contexto (que pasaremos desde la vista)
+        user = self.context['request'].user
+        
+        if not user.check_password(value):
+            raise serializers.ValidationError("Tu contraseña antigua no es correcta.")
+        
+        return value
+
+    def validate_new_password(self, value):
+        """
+        (Opcional) Puedes agregar validaciones de fortaleza de contraseña aquí.
+        Por ejemplo, que tenga al menos 8 caracteres.
+        """
+        if len(value) < 8:
+            raise serializers.ValidationError("La nueva contraseña debe tener al menos 8 caracteres.")
+        return value
+    
+# -- SERIALIZADOR 4: EDITAR FOTO DE PERFIL --
+class UserPhotoSerializer(serializers.ModelSerializer):
+    """
+    Serializador dedicado EXCLUSIVAMENTE a subir/actualizar
+    la foto_perfil del UserProfile.
+    
+    Gracias a 'django-cloudinary-storage', cuando 'save()' se llame,
+    esto subirá el archivo directamente a Cloudinary.
+    """
+    class Meta:
+        model = UserProfile
+        fields = ('foto_perfil',)
