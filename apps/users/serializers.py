@@ -127,30 +127,27 @@ class ProfileDataSerializer(serializers.ModelSerializer):
 
 # --- SERIALIZADOR 2: Para actualizar el perfil (email + datos) ---
 class UserProfileUpdateSerializer(serializers.ModelSerializer):
-    """
-    Serializador principal para la acción "me" (PATCH).
-    Permite actualizar 'email' y los datos anidados de 'profile'.
-    OMITE 'rol' y otros campos sensibles.
-    """
-    profile = ProfileDataSerializer()
+    profile = serializers.DictField(required=False)
 
     class Meta:
         model = User
-        fields = ('email', 'profile')
+        fields = ['email', 'profile']  # agrega otros campos de User si tienes
 
     def update(self, instance, validated_data):
-        # 1. Actualizar datos del UserProfile anidado
+        # Extrae datos del perfil si existen
         profile_data = validated_data.pop('profile', None)
-        
-        if profile_data and hasattr(instance, 'profile'):
-            profile_instance = instance.profile
-            for attr, value in profile_data.items():
-                setattr(profile_instance, attr, value)
-            profile_instance.save()
 
-        # 2. Actualizar 'email' del User (si se proporcionó)
-        instance.email = validated_data.get('email', instance.email)
+        # Actualiza campos del usuario
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
         instance.save()
+
+        # Actualiza perfil existente (no crea uno nuevo)
+        if profile_data:
+            profile = instance.profile  # acceso al perfil actual
+            for attr, value in profile_data.items():
+                setattr(profile, attr, value)
+            profile.save()
 
         return instance
 
