@@ -211,43 +211,56 @@ class UserViewSet(viewsets.ModelViewSet):
         parser_classes=[MultiPartParser, FormParser], # Espera 'multipart/form-data'
         url_path='me/upload-photo'
     )
+
+    @action(
+        detail=False, 
+        methods=['post'], 
+        permission_classes=[IsAuthenticated],
+        parser_classes=[MultiPartParser, FormParser],
+        url_path='me/upload-photo'
+    )
     def upload_my_photo(self, request, *args, **kwargs):
         """
-        Sube o actualiza la foto de perfil del usuario.
-        Gracias a django-cloudinary-storage, el archivo
-        se envía directamente a Cloudinary al hacer .save().
+        Sube o actualiza la foto de perfil del usuario a Cloudinary.
         """
-        
-        # 1. Obtener el perfil
         try:
             profile = request.user.profile
         except UserProfile.DoesNotExist:
             return Response(
-                {"error": "El usuario no tiene un perfil para asignarle una foto."}, 
+                {"error": "El usuario no tiene un perfil."}, 
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        # 2. Validar el archivo con el serializador
-        #    (No es necesario verificar request.FILES, el serializer lo hace)
+        # Verifica que se haya enviado un archivo
+        if 'foto_perfil' not in request.FILES:
+            return Response(
+                {"error": "No se proporcionó ninguna imagen."}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         serializer = UserPhotoSerializer(profile, data=request.data, partial=True)
 
         if serializer.is_valid():
-            # 3. Este .save() ahora habla con Cloudinary,
-            # sube el archivo y guarda la referencia en la BD.
-            serializer.save()
+            # Guarda la imagen (Cloudinary se encarga de la subida)
+            updated_profile = serializer.save()
             
+            # Log de la acción
             log_action(
                 request=request, 
-                accion="Actualizó su foto de perfil (Cloudinary)", 
+                accion="Actualizó su foto de perfil", 
                 objeto=f"Usuario: {request.user.email}", 
                 usuario=request.user
             )
             
-            # 4. Devolvemos el serializador.
-            #    El campo 'foto_perfil' ahora tendrá la URL de Cloudinary.
-            return Response(serializer.data, status=status.HTTP_200_OK)
+            # Devuelve la respuesta con la URL
+            return Response(
+                {
+                    "message": "Foto de perfil actualizada exitosamente",
+                    "foto_perfil": serializer.data['foto_perfil']
+                }, 
+                status=status.HTTP_200_OK
+            )
         
-        # Si no es un archivo válido
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def perform_create(self, serializer):

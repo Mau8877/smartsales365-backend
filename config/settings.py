@@ -205,16 +205,13 @@ STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles' 
 
 # Imagenes en la nube
-CLOUDINARY_STORAGE = {
-    'CLOUD_NAME': os.environ.get('CLOUDIRAY_NAME'),
-    'API_KEY': os.environ.get('CLOUDIRAY_API_KEY'),
-    'API_SECRET': os.environ.get('CLOUDIRAY_API_SECRET'),
-}
 
-# --- ESTA ES LA MAGIA ---
-# Le dice a Django que use Cloudinary para CUALQUIER
-# archivo que se suba a través de un ImageField o FileField.
 DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
+CLOUDINARY_STORAGE = {
+    'CLOUD_NAME': os.environ.get('CLOUDINARY_NAME'),
+    'API_KEY': os.environ.get('CLOUDINARY_API_KEY'),
+    'API_SECRET': os.environ.get('CLOUDINARY_API_SECRET'),
+}
 
 # (Opcional pero recomendado: usa Cloudinary para tus 'static' también)
 # STATICFILES_STORAGE = 'cloudinary_storage.storage.StaticHashedCloudinaryStorage'

@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.db import models
 from django.contrib.auth.hashers import make_password, check_password
+from cloudinary_storage.storage import MediaCloudinaryStorage
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 
 # --- MODELO DE ROL ---
@@ -111,7 +112,12 @@ class UserProfile(models.Model):
     direccion = models.TextField(blank=True, null=True)
     fecha_nacimiento = models.DateField(null=True, blank=True)
     telefono = models.CharField(max_length=20, null=True, blank=True)
-    foto_perfil = models.ImageField(upload_to='fotos_perfil/', null=True, blank=True)
+    foto_perfil = models.ImageField(
+        upload_to='fotos_perfil/',
+        storage=MediaCloudinaryStorage(),
+        null=True,
+        blank=True
+    )
     genero = models.CharField(max_length=20, choices=OPCIONES_GENERO, null=True, blank=True)
 
     def __str__(self):

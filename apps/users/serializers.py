@@ -183,13 +183,22 @@ class ChangePasswordSerializer(serializers.Serializer):
     
 # -- SERIALIZADOR 4: EDITAR FOTO DE PERFIL --
 class UserPhotoSerializer(serializers.ModelSerializer):
-    """
-    Serializador dedicado EXCLUSIVAMENTE a subir/actualizar
-    la foto_perfil del UserProfile.
+    foto_perfil_url = serializers.SerializerMethodField()
     
-    Gracias a 'django-cloudinary-storage', cuando 'save()' se llame,
-    esto subirá el archivo directamente a Cloudinary.
-    """
     class Meta:
         model = UserProfile
-        fields = ('foto_perfil',)
+        fields = ['foto_perfil', 'foto_perfil_url']
+        read_only_fields = ['foto_perfil_url']
+    
+    def get_foto_perfil_url(self, obj):
+        """Devuelve la URL completa de Cloudinary"""
+        if obj.foto_perfil:
+            return obj.foto_perfil.url  # Cloudinary proporciona .url automáticamente
+        return None
+    
+    def to_representation(self, instance):
+        """Transforma la respuesta para devolver solo la URL"""
+        data = super().to_representation(instance)
+        # Reemplaza el campo file por la URL en la respuesta
+        data['foto_perfil'] = data.get('foto_perfil_url')
+        return data
