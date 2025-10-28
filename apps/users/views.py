@@ -208,51 +208,31 @@ class UserViewSet(viewsets.ModelViewSet):
         detail=False, 
         methods=['post'], 
         permission_classes=[IsAuthenticated],
-        parser_classes=[MultiPartParser, FormParser], # Espera 'multipart/form-data'
-        url_path='me/upload-photo'
-    )
-
-    @action(
-        detail=False, 
-        methods=['post'], 
-        permission_classes=[IsAuthenticated],
         parser_classes=[MultiPartParser, FormParser],
         url_path='me/upload-photo'
     )
     def upload_my_photo(self, request, *args, **kwargs):
-        """
-        Sube o actualiza la foto de perfil del usuario a Cloudinary.
-        """
         try:
             profile = request.user.profile
         except UserProfile.DoesNotExist:
-            return Response(
-                {"error": "El usuario no tiene un perfil."}, 
-                status=status.HTTP_404_NOT_FOUND
-            )
+            return Response({"error": "El usuario no tiene un perfil."}, status=status.HTTP_404_NOT_FOUND)
 
-        # Verifica que se haya enviado un archivo
         if 'foto_perfil' not in request.FILES:
-            return Response(
-                {"error": "No se proporcionó ninguna imagen."}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({"error": "No se proporcionó ninguna imagen."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Borra la foto anterior de Cloudinary antes de subir la nueva
+        if profile.foto_perfil:
+            profile.foto_perfil.delete(save=False)
 
         serializer = UserPhotoSerializer(profile, data=request.data, partial=True)
-
         if serializer.is_valid():
-            # Guarda la imagen (Cloudinary se encarga de la subida)
             updated_profile = serializer.save()
-            
-            # Log de la acción
             log_action(
                 request=request, 
                 accion="Actualizó su foto de perfil", 
                 objeto=f"Usuario: {request.user.email}", 
                 usuario=request.user
             )
-            
-            # Devuelve la respuesta con la URL
             return Response(
                 {
                     "message": "Foto de perfil actualizada exitosamente",
@@ -260,8 +240,9 @@ class UserViewSet(viewsets.ModelViewSet):
                 }, 
                 status=status.HTTP_200_OK
             )
-        
+
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
     def perform_create(self, serializer):
         user_obj = serializer.save()
