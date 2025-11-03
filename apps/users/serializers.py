@@ -24,7 +24,7 @@ class AdministradorProfileWriteSerializer(serializers.ModelSerializer):
 class ClienteProfileWriteSerializer(serializers.ModelSerializer):
     class Meta: model = Cliente; fields = ['nivel_fidelidad', 'puntos_acumulados']
 
-# --- Serializer Principal de User (corregido) ---
+# --- Serializer Principal de User  ---
 class UserSerializer(serializers.ModelSerializer):
     rol_id = serializers.PrimaryKeyRelatedField(queryset=Rol.objects.all(), source='rol', write_only=True)
     rol = RolSerializer(read_only=True)
@@ -45,23 +45,81 @@ class UserSerializer(serializers.ModelSerializer):
         extra_kwargs = {'password': {'write_only': True}}
 
     @transaction.atomic
+    def update(self, instance, validated_data):
+        """
+        Maneja la actualización del User y sus perfiles anidados (UserProfile, Vendedor, Admin).
+        """
+        # 1. Sacamos TODOS los diccionarios de perfiles anidados
+        profile_data = validated_data.pop('profile', None)
+        vendedor_data = validated_data.pop('vendedor_profile', None)
+        admin_data = validated_data.pop('admin_profile', None)
+        cliente_data = validated_data.pop('cliente_profile', None)
+        
+        # (Opcional) Sacamos el rol. Tu frontend lo deshabilita, 
+        # pero si lo envías, esto evita que el bucle de abajo lo procese mal.
+        # rol_data = validated_data.pop('rol', None) 
+        # Nota: 'rol_id' (source='rol') sí es un campo de User, así que está bien
+        # dejarlo en validated_data.
+
+        # 2. Actualizamos los campos directos del User (email, is_active, rol_id)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        
+        instance.save() # Guardamos la instancia del User
+
+        # 3. Actualizamos el UserProfile (genérico)
+        if profile_data and hasattr(instance, 'profile'):
+            profile = instance.profile
+            for attr, value in profile_data.items():
+                setattr(profile, attr, value)
+            profile.save() 
+        
+        # 4. Actualizamos el VendedorProfile (específico)
+        if vendedor_data and hasattr(instance, 'vendedor_profile'):
+            vendedor_profile = instance.vendedor_profile
+            for attr, value in vendedor_data.items():
+                setattr(vendedor_profile, attr, value)
+            vendedor_profile.save()
+
+        # 5. Actualizamos el AdministradorProfile (específico)
+        if admin_data and hasattr(instance, 'admin_profile'):
+            admin_profile = instance.admin_profile
+            for attr, value in admin_data.items():
+                setattr(admin_profile, attr, value)
+            admin_profile.save()
+
+        # 6. (Por si acaso) Actualizamos el ClienteProfile
+        if cliente_data and hasattr(instance, 'cliente_profile'):
+            cliente_profile = instance.cliente_profile
+            for attr, value in cliente_data.items():
+                setattr(cliente_profile, attr, value)
+            cliente_profile.save()
+
+        return instance
+
+    @transaction.atomic
     def create(self, validated_data):
         profile_data = validated_data.pop('profile')
         rol = validated_data.get('rol')
         tienda = validated_data.pop('tienda', None) or self.context.get('tienda_forzada')
         
+        # Saca los perfiles específicos (incluso si están vacíos)
+        vendedor_data = validated_data.pop('vendedor_profile', None) or {}
+        admin_data = validated_data.pop('admin_profile', None) or {}
+        cliente_data = validated_data.pop('cliente_profile', None) or {}
+
         user = User.objects.create_user(**validated_data)
         UserProfile.objects.create(user=user, **profile_data)
 
         if rol:
             if rol.nombre == 'vendedor':
                 if not tienda: raise serializers.ValidationError("Un Vendedor debe estar asociado a una tienda.")
-                Vendedor.objects.create(user=user, tienda=tienda, **(validated_data.pop('vendedor_profile', None) or {}))
+                Vendedor.objects.create(user=user, tienda=tienda, **vendedor_data)
             elif rol.nombre == 'admin':
                 if not tienda: raise serializers.ValidationError("Un Administrador debe estar asociado a una tienda.")
-                Administrador.objects.create(user=user, tienda=tienda, **(validated_data.pop('admin_profile', None) or {}))
+                Administrador.objects.create(user=user, tienda=tienda, **admin_data)
             elif rol.nombre == 'cliente':
-                Cliente.objects.create(user=user, **(validated_data.pop('cliente_profile', None) or {}))
+                Cliente.objects.create(user=user, **cliente_data)
                 if tienda: tienda.clientes.add(user)
         return user
 

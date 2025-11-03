@@ -22,8 +22,8 @@ class BitacoraViewSet(viewsets.ReadOnlyModelViewSet):
     pagination_class = CustomPageNumberPagination
     permission_classes = [permissions.IsAuthenticated, IsAdminOrSuperAdmin]
     filter_backends = [OrderingFilter, SearchFilter]
-    ordering_fields = ['timestamp', 'user__email', 'tienda__nombre']
-    search_fields = ['accion', 'objeto', 'user__email', 'tienda__nombre']
+    ordering_fields = ['timestamp', 'user__email', 'tienda__nombre', 'ip', 'accion']
+    search_fields = ['accion', 'objeto', 'user__email', 'tienda__nombre', 'timestamp', 'ip']
 
     def get_queryset(self):
         user = self.request.user

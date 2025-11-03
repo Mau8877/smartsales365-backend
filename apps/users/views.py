@@ -1,6 +1,6 @@
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated, SAFE_METHODS
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.authtoken.models import Token
@@ -8,6 +8,7 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from django.contrib.auth import authenticate, login
 from django.db.models import Q
 from .utils import get_user_tienda
+from django_filters.rest_framework import DjangoFilterBackend
 
 from .models import User, Rol, Cliente, Vendedor, Administrador, UserProfile
 from .serializers import (
@@ -23,6 +24,24 @@ class IsSuperAdmin(permissions.BasePermission):
     """Permite el acceso solo a usuarios con el rol de superAdmin."""
     def has_permission(self, request, view):
         return request.user.is_authenticated and request.user.rol and request.user.rol.nombre == 'superAdmin'
+
+class IsSuperAdminOrReadOnly(permissions.BasePermission):
+    """
+    Permite acceso de LECTURA (GET) a cualquier usuario autenticado,
+    pero solo permite ESCRITURA (POST, PUT, DELETE) a SuperAdmins.
+    """
+    def has_permission(self, request, view):
+        # Si no está autenticado, no hay acceso.
+        if not request.user or not request.user.is_authenticated:
+            return False
+        
+        # Si es un método seguro (GET, HEAD, OPTIONS), permite el acceso
+        if request.method in SAFE_METHODS:
+            return True
+        
+        # Si es un método de escritura (POST, PUT, DELETE),
+        # solo permite si es SuperAdmin
+        return request.user.rol and request.user.rol.nombre == 'superAdmin'
 
 class TenantAwareViewSet(viewsets.ModelViewSet):
     """
@@ -48,9 +67,12 @@ class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all().select_related('rol', 'profile').prefetch_related('admin_profile__tienda', 'vendedor_profile__tienda')
     serializer_class = UserSerializer
     pagination_class = CustomPageNumberPagination
-    filter_backends = [OrderingFilter, SearchFilter]
     ordering_fields = ['email', 'rol__nombre', 'profile__apellido'] 
     search_fields = ['email', 'profile__nombre', 'profile__apellido'] 
+    filter_backends = [DjangoFilterBackend, OrderingFilter, SearchFilter]
+    filterset_fields = {
+        'rol__nombre': ['in', 'exact'], # <-- 'in' nos permite filtrar por lista
+    }
     
     def get_permissions(self):
         if self.action in ['create', 'login']:
@@ -338,7 +360,7 @@ class RolViewSet(viewsets.ModelViewSet):
     """Gestión de Roles del sistema (Solo para SuperAdmin)."""
     queryset = Rol.objects.all().order_by('nombre')
     serializer_class = RolSerializer
-    permission_classes = [IsAuthenticated, IsSuperAdmin]
+    permission_classes = [IsAuthenticated, IsSuperAdminOrReadOnly]
     filter_backends = [SearchFilter]
     search_fields = ['nombre']
 
