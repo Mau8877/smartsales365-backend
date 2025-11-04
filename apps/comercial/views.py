@@ -158,7 +158,53 @@ class CategoriaViewSet(TenantAwareViewSet):
     queryset = Categoria.objects.all()
     serializer_class = CategoriaSerializer
     search_fields = ['nombre']
-    ordering_fields = ['nombre']
+    # --- CORRECCIÓN AQUÍ ---
+    ordering_fields = ['nombre', 'estado'] # Añadido 'estado' para ordenar
+
+    # --- ¡LOG DE AUDITORÍA AÑADIDO A CATEGORIA! ---
+    def perform_create(self, serializer):
+        user = self.request.user
+        tienda_actual = get_user_tienda(user)
+        
+        if user.rol and user.rol.nombre == 'superAdmin':
+             tienda_id = self.request.data.get('tienda_id')
+             if not tienda_id:
+                 raise serializers.ValidationError("SuperAdmin debe proveer 'tienda_id'.")
+             tienda_actual = Tienda.objects.get(pk=tienda_id)
+        
+        if not tienda_actual:
+            raise serializers.ValidationError("Tu usuario no está asociado a ninguna tienda.")
+        
+        # El 'usuario' es ignorado por el serializer, pero está bien pasarlo
+        categoria = serializer.save(tienda=tienda_actual, usuario=user)
+        log_action(self.request, "Creó Categoría", f"Categoría: {categoria.nombre} (ID: {categoria.id})", user)
+
+    def perform_update(self, serializer):
+        # Guardamos el estado original para loguear el cambio
+        original_estado = serializer.instance.estado
+        
+        # El 'usuario' es ignorado por el serializer
+        categoria = serializer.save(usuario=self.request.user)
+        
+        # Lógica de Log para "Activar" / "Desactivar"
+        accion = "Actualizó Categoría"
+        if 'estado' in serializer.validated_data:
+            if original_estado != categoria.estado:
+                accion = "Activó Categoría" if categoria.estado else "Desactivó Categoría"
+                
+        log_action(self.request, accion, f"Categoría: {categoria.nombre} (ID: {categoria.id})", self.request.user)
+
+    def perform_destroy(self, instance):
+        """ Implementa el BORRADO LÓGICO. """
+        nombre = instance.nombre
+        id_instancia = instance.id
+        
+        if instance.estado: # Solo desactiva si estaba activa
+            instance.estado = False
+            instance.save()
+            log_action(self.request, "Desactivó Categoría (vía Delete)", f"Categoría: {nombre} (ID: {id_instancia})", self.request.user)
+    # --- FIN DE LA CORRECCIÓN DE CATEGORIA ---
+
 
 class LogPrecioProductoViewSet(TenantAwareViewSet):
     """ API endpoint de solo lectura para el historial de precios. """
@@ -203,14 +249,30 @@ class ProductoViewSet(TenantAwareViewSet):
         log_action(self.request, "Creó producto", f"Producto: {producto.nombre}", user)
 
     def perform_update(self, serializer):
+        # --- CORRECCIÓN AQUÍ (Añadir log de estado) ---
+        original_estado = serializer.instance.estado
+        
         # El método .save() del serializer ya pasa el usuario
         producto = serializer.save() 
-        log_action(self.request, "Actualizó producto", f"Producto: {producto.nombre}", self.request.user)
+        
+        accion = "Actualizó Producto"
+        if 'estado' in serializer.validated_data:
+            if original_estado != producto.estado:
+                accion = "Activó Producto" if producto.estado else "Desactivó Producto"
+        
+        log_action(self.request, accion, f"Producto: {producto.nombre} (ID: {producto.id})", self.request.user)
 
     def perform_destroy(self, instance):
+        # --- CORRECCIÓN AQUÍ (Borrado lógico) ---
+        """ Implementa el BORRADO LÓGICO para Productos. """
         nombre = instance.nombre
-        instance.delete()
-        log_action(self.request, "Eliminó producto", f"Producto: {nombre}", self.request.user)
+        id_instancia = instance.id
+        
+        if instance.estado:
+            instance.estado = False
+            instance.save()
+            log_action(self.request, "Desactivó Producto (vía Delete)", f"Producto: {nombre} (ID: {id_instancia})", self.request.user)
+        # --- FIN DE LA CORRECCIÓN DE PRODUCTO ---
 
     @action(
         detail=True, 
