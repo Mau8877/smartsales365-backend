@@ -54,12 +54,6 @@ class UserSerializer(serializers.ModelSerializer):
         vendedor_data = validated_data.pop('vendedor_profile', None)
         admin_data = validated_data.pop('admin_profile', None)
         cliente_data = validated_data.pop('cliente_profile', None)
-        
-        # (Opcional) Sacamos el rol. Tu frontend lo deshabilita, 
-        # pero si lo envías, esto evita que el bucle de abajo lo procese mal.
-        # rol_data = validated_data.pop('rol', None) 
-        # Nota: 'rol_id' (source='rol') sí es un campo de User, así que está bien
-        # dejarlo en validated_data.
 
         # 2. Actualizamos los campos directos del User (email, is_active, rol_id)
         for attr, value in validated_data.items():
