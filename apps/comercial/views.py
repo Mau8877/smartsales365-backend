@@ -1,4 +1,4 @@
-from rest_framework import viewsets, status, permissions, serializers
+from rest_framework import viewsets, status, permissions, serializers, mixins
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -203,7 +203,7 @@ class CategoriaViewSet(TenantAwareViewSet):
             instance.estado = False
             instance.save()
             log_action(self.request, "Desactivó Categoría (vía Delete)", f"Categoría: {nombre} (ID: {id_instancia})", self.request.user)
-    # --- FIN DE LA CORRECCIÓN DE CATEGORIA ---
+
 
 
 class LogPrecioProductoViewSet(TenantAwareViewSet):
@@ -213,6 +213,28 @@ class LogPrecioProductoViewSet(TenantAwareViewSet):
     http_method_names = ['get', 'head', 'options'] # Solo lectura
     filterset_fields = ['producto']
     ordering_fields = ['-fecha_cambio']
+
+class FotoViewSet(mixins.DestroyModelMixin, viewsets.GenericViewSet):
+    """
+    ViewSet simple para permitir BORRAR fotos.
+    El frontend lo usará para gestionar las fotos eliminadas.
+    """
+    queryset = Foto.objects.all()
+    serializer_class = FotoSerializer
+    permission_classes = [IsAuthenticated, IsAdminOrReadOnly] 
+
+    def get_queryset(self):
+        """ El usuario solo puede borrar fotos de su propia tienda """
+        user = self.request.user
+        if user.rol and user.rol.nombre == 'superAdmin':
+            return Foto.objects.all()
+        
+        tienda_actual = get_user_tienda(user)
+        if tienda_actual:
+            # Filtra fotos que pertenezcan a productos de la tienda del usuario
+            return Foto.objects.filter(producto__tienda=tienda_actual)
+        
+        return Foto.objects.none()
 
 class ProductoViewSet(TenantAwareViewSet):
     """ API endpoint para Productos. """
@@ -306,6 +328,51 @@ class ProductoViewSet(TenantAwareViewSet):
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(
+        detail=True, 
+        methods=['post'], 
+        permission_classes=[IsAuthenticated, IsAdminOrReadOnly],
+        url_path='set-principal-foto'
+    )
+    def set_principal_foto(self, request, pk=None):
+        """
+        Establece una foto EXISTENTE como la principal.
+        Espera un JSON: { "foto_id": "ID_DE_LA_FOTO" }
+        """
+        producto = self.get_object()
+        foto_id = request.data.get('foto_id')
+
+        if not foto_id:
+            return Response(
+                {"error": "'foto_id' es requerido."}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Desmarca todas las fotos de este producto
+            producto.fotos.update(principal=False)
+            
+            # Marca la foto seleccionada como principal
+            foto = Foto.objects.get(pk=foto_id, producto=producto)
+            foto.principal = True
+            foto.save()
+            
+            return Response(
+                {"success": f"Foto {foto_id} es ahora la principal."}, 
+                status=status.HTTP_200_OK
+            )
+            
+        except Foto.DoesNotExist:
+            return Response(
+                {"error": "Foto no encontrada o no pertenece a este producto."}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {"error": str(e)}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 # --- ViewSets de Carrito ---

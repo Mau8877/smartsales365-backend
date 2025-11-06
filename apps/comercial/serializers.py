@@ -12,8 +12,6 @@ class MarcaSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ('tienda',)
 
-    # --- CORRECCIÓN AQUÍ ---
-    # Sacamos el 'usuario' que viene del ViewSet antes de que llegue al modelo
     def create(self, validated_data):
         validated_data.pop('usuario', None)
         return super().create(validated_data)
@@ -29,8 +27,6 @@ class CategoriaSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ('tienda',)
 
-    # --- CORRECCIÓN AQUÍ ---
-    # Sacamos el 'usuario' que viene del ViewSet antes de que llegue al modelo
     def create(self, validated_data):
         validated_data.pop('usuario', None)
         return super().create(validated_data)
@@ -133,15 +129,8 @@ class ProductoSerializer(serializers.ModelSerializer):
             self.fields['marca_id'].queryset = Marca.objects.filter(tienda=tienda)
             self.fields['categoria_ids'].queryset = Categoria.objects.filter(tienda=tienda)
 
-    # --- CORRECCIÓN AQUÍ ---
     def create(self, validated_data):
-        """
-        Saca el 'usuario' ya que el log de precios
-        solo se activa en 'update'.
-        """
-        # Sacamos el 'usuario' para que no dé error
         validated_data.pop('usuario', None)
-        # La tienda se inyecta desde perform_create en la vista
         return super().create(validated_data)
 
     def update(self, instance, validated_data):

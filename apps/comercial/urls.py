@@ -13,6 +13,7 @@ router.register(
     basename='log-precio-producto'
 )
 router.register(r'carritos', views.CarritoViewSet, basename='carrito')
+router.register(r'fotos', views.FotoViewSet, basename='foto')
 
 urlpatterns = [
     path('', include(router.urls)),
