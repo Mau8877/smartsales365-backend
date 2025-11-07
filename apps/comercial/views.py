@@ -80,9 +80,6 @@ class TenantAwareViewSet(viewsets.ModelViewSet):
         user = self.request.user
         
         if user.rol and user.rol.nombre == 'superAdmin':
-            # El SuperAdmin debe proveer 'tienda_id' en el request
-            # (O podríamos forzarlo a seleccionar una)
-            # Por ahora, confiamos en que el serializer lo maneje
             serializer.save() 
         else:
             tienda_actual = get_user_tienda(user)
@@ -105,7 +102,6 @@ class MarcaViewSet(TenantAwareViewSet):
     search_fields = ['nombre']
     ordering_fields = ['nombre', 'estado']
 
-    # --- ¡LOG DE AUDITORÍA AÑADIDO! ---
     def perform_create(self, serializer):
         user = self.request.user
         tienda_actual = get_user_tienda(user)
@@ -119,15 +115,11 @@ class MarcaViewSet(TenantAwareViewSet):
         if not tienda_actual:
             raise serializers.ValidationError("Tu usuario no está asociado a ninguna tienda.")
         
-        # El 'usuario' es ignorado por el serializer de Marca, pero está bien pasarlo
         marca = serializer.save(tienda=tienda_actual, usuario=user)
         log_action(self.request, "Creó Marca", f"Marca: {marca.nombre} (ID: {marca.id})", user)
 
     def perform_update(self, serializer):
-        # Guardamos el estado original para loguear el cambio
         original_estado = serializer.instance.estado
-        
-        # El 'usuario' es ignorado por el serializer, lo cual está bien
         marca = serializer.save(usuario=self.request.user)
         
         # Lógica de Log para "Activar" / "Desactivar"
@@ -150,18 +142,14 @@ class MarcaViewSet(TenantAwareViewSet):
             instance.estado = False
             instance.save()
             log_action(self.request, "Desactivó Marca (vía Delete)", f"Marca: {nombre} (ID: {id_instancia})", self.request.user)
-        # Si ya estaba inactiva, no hacemos nada o podríamos borrarla
-        # (Por seguridad, no hacemos nada)
 
 class CategoriaViewSet(TenantAwareViewSet):
     """ API endpoint para Categorías, filtrado por tienda. """
     queryset = Categoria.objects.all()
     serializer_class = CategoriaSerializer
     search_fields = ['nombre']
-    # --- CORRECCIÓN AQUÍ ---
-    ordering_fields = ['nombre', 'estado'] # Añadido 'estado' para ordenar
+    ordering_fields = ['nombre', 'estado']
 
-    # --- ¡LOG DE AUDITORÍA AÑADIDO A CATEGORIA! ---
     def perform_create(self, serializer):
         user = self.request.user
         tienda_actual = get_user_tienda(user)
@@ -175,18 +163,14 @@ class CategoriaViewSet(TenantAwareViewSet):
         if not tienda_actual:
             raise serializers.ValidationError("Tu usuario no está asociado a ninguna tienda.")
         
-        # El 'usuario' es ignorado por el serializer, pero está bien pasarlo
         categoria = serializer.save(tienda=tienda_actual, usuario=user)
         log_action(self.request, "Creó Categoría", f"Categoría: {categoria.nombre} (ID: {categoria.id})", user)
 
     def perform_update(self, serializer):
-        # Guardamos el estado original para loguear el cambio
         original_estado = serializer.instance.estado
         
-        # El 'usuario' es ignorado por el serializer
         categoria = serializer.save(usuario=self.request.user)
         
-        # Lógica de Log para "Activar" / "Desactivar"
         accion = "Actualizó Categoría"
         if 'estado' in serializer.validated_data:
             if original_estado != categoria.estado:
@@ -199,7 +183,7 @@ class CategoriaViewSet(TenantAwareViewSet):
         nombre = instance.nombre
         id_instancia = instance.id
         
-        if instance.estado: # Solo desactiva si estaba activa
+        if instance.estado:
             instance.estado = False
             instance.save()
             log_action(self.request, "Desactivó Categoría (vía Delete)", f"Categoría: {nombre} (ID: {id_instancia})", self.request.user)
@@ -231,7 +215,6 @@ class FotoViewSet(mixins.DestroyModelMixin, viewsets.GenericViewSet):
         
         tienda_actual = get_user_tienda(user)
         if tienda_actual:
-            # Filtra fotos que pertenezcan a productos de la tienda del usuario
             return Foto.objects.filter(producto__tienda=tienda_actual)
         
         return Foto.objects.none()
@@ -251,13 +234,11 @@ class ProductoViewSet(TenantAwareViewSet):
         'precio': ['gte', 'lte'],
     }
 
-    # Sobrescribimos perform_create y perform_update para el log de auditoría
     def perform_create(self, serializer):
         user = self.request.user
         tienda_actual = get_user_tienda(user)
         
         if user.rol and user.rol.nombre == 'superAdmin':
-             # SuperAdmin debe especificar la tienda en el request
              tienda_id = self.request.data.get('tienda_id')
              if not tienda_id:
                  raise serializers.ValidationError("SuperAdmin debe proveer 'tienda_id'.")
@@ -266,15 +247,11 @@ class ProductoViewSet(TenantAwareViewSet):
         if not tienda_actual:
             raise serializers.ValidationError("Tu usuario no está asociado a ninguna tienda.")
         
-        # Pasamos el 'usuario' para el log y la 'tienda'
         producto = serializer.save(tienda=tienda_actual, usuario=user)
         log_action(self.request, "Creó producto", f"Producto: {producto.nombre}", user)
 
     def perform_update(self, serializer):
-        # --- CORRECCIÓN AQUÍ (Añadir log de estado) ---
         original_estado = serializer.instance.estado
-        
-        # El método .save() del serializer ya pasa el usuario
         producto = serializer.save() 
         
         accion = "Actualizó Producto"
@@ -285,7 +262,6 @@ class ProductoViewSet(TenantAwareViewSet):
         log_action(self.request, accion, f"Producto: {producto.nombre} (ID: {producto.id})", self.request.user)
 
     def perform_destroy(self, instance):
-        # --- CORRECCIÓN AQUÍ (Borrado lógico) ---
         """ Implementa el BORRADO LÓGICO para Productos. """
         nombre = instance.nombre
         id_instancia = instance.id
@@ -294,7 +270,6 @@ class ProductoViewSet(TenantAwareViewSet):
             instance.estado = False
             instance.save()
             log_action(self.request, "Desactivó Producto (vía Delete)", f"Producto: {nombre} (ID: {id_instancia})", self.request.user)
-        # --- FIN DE LA CORRECCIÓN DE PRODUCTO ---
 
     @action(
         detail=True, 
@@ -307,19 +282,23 @@ class ProductoViewSet(TenantAwareViewSet):
         """ Sube o actualiza una foto para un producto. """
         producto = self.get_object()
         
+        if producto.fotos.count() >= 5:
+            return Response(
+                {"error": "Límite de 5 fotos alcanzado para este producto."}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         if 'foto' not in request.FILES:
             return Response({"error": "No se proporcionó ninguna imagen."}, status=status.HTTP_400_BAD_REQUEST)
 
         data = {'producto': producto.pk, 'foto': request.FILES['foto']}
         
-        # Si 'principal' se envía en el form-data, se usa
         if 'principal' in request.data:
             data['principal'] = request.data.get('principal')
 
         serializer = FotoSerializer(data=data, context=self.get_serializer_context())
         
         if serializer.is_valid():
-            # Si es la foto principal, desmarca las otras
             if serializer.validated_data.get('principal', False):
                 producto.fotos.update(principal=False)
             
@@ -376,7 +355,6 @@ class ProductoViewSet(TenantAwareViewSet):
 
 
 # --- ViewSets de Carrito ---
-
 class CarritoViewSet(viewsets.GenericViewSet):
     """
     API endpoint para gestionar el carrito de compras del cliente.

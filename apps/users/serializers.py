@@ -22,7 +22,29 @@ class AdministradorProfileWriteSerializer(serializers.ModelSerializer):
     class Meta: model = Administrador; fields = ['departamento', 'fecha_contratacion']
 
 class ClienteProfileWriteSerializer(serializers.ModelSerializer):
-    class Meta: model = Cliente; fields = ['nivel_fidelidad', 'puntos_acumulados']
+    class Meta: model = Cliente; fields = ['nivel_fidelidad', 'puntos_acumulados', 'nit', 'razon_social']
+
+# --- Serializers de Detalle (para vistas de lista/detalle) ---
+class TiendaBasicSerializer(serializers.ModelSerializer):
+    class Meta: model = Tienda; fields = ['id', 'nombre']
+
+class UserBasicSerializer(serializers.ModelSerializer):
+    profile = UserProfileSerializer(read_only=True)
+    class Meta: model = User; fields = ['id_usuario', 'email', 'profile']
+
+class ClienteDetailSerializer(serializers.ModelSerializer):
+    user = UserBasicSerializer(read_only=True)
+    class Meta: model = Cliente; fields = '__all__'
+
+class VendedorDetailSerializer(serializers.ModelSerializer):
+    user = UserBasicSerializer(read_only=True)
+    tienda = TiendaBasicSerializer(read_only=True)
+    class Meta: model = Vendedor; fields = '__all__'
+
+class AdministradorDetailSerializer(serializers.ModelSerializer):
+    user = UserBasicSerializer(read_only=True)
+    tienda = TiendaBasicSerializer(read_only=True)
+    class Meta: model = Administrador; fields = '__all__'
 
 # --- Serializer Principal de User  ---
 class UserSerializer(serializers.ModelSerializer):
@@ -36,11 +58,14 @@ class UserSerializer(serializers.ModelSerializer):
     admin_profile = AdministradorProfileWriteSerializer(required=False, allow_null=True)
     cliente_profile = ClienteProfileWriteSerializer(required=False, allow_null=True)
 
+    cliente_profile_data = ClienteDetailSerializer(source='cliente_profile', read_only=True)
+
     class Meta:
         model = User
         fields = [
             'id_usuario', 'email', 'password', 'rol', 'rol_id', 'tienda_id', 'is_active', 
-            'fecha_creacion', 'profile', 'vendedor_profile', 'admin_profile', 'cliente_profile'
+            'fecha_creacion', 'profile', 'vendedor_profile', 'admin_profile', 'cliente_profile',
+            'cliente_profile_data'
         ]
         extra_kwargs = {'password': {'write_only': True}}
 
@@ -82,7 +107,7 @@ class UserSerializer(serializers.ModelSerializer):
                 setattr(admin_profile, attr, value)
             admin_profile.save()
 
-        # 6. (Por si acaso) Actualizamos el ClienteProfile
+        # 6. Actualizamos el ClienteProfile
         if cliente_data and hasattr(instance, 'cliente_profile'):
             cliente_profile = instance.cliente_profile
             for attr, value in cliente_data.items():
@@ -136,27 +161,7 @@ class UserSerializer(serializers.ModelSerializer):
         representation.pop('cliente_profile', None)
         return representation
 
-# --- Serializers de Detalle (para vistas de lista/detalle) ---
-class TiendaBasicSerializer(serializers.ModelSerializer):
-    class Meta: model = Tienda; fields = ['id', 'nombre']
 
-class UserBasicSerializer(serializers.ModelSerializer):
-    profile = UserProfileSerializer(read_only=True)
-    class Meta: model = User; fields = ['id_usuario', 'email', 'profile']
-
-class ClienteDetailSerializer(serializers.ModelSerializer):
-    user = UserBasicSerializer(read_only=True)
-    class Meta: model = Cliente; fields = '__all__'
-
-class VendedorDetailSerializer(serializers.ModelSerializer):
-    user = UserBasicSerializer(read_only=True)
-    tienda = TiendaBasicSerializer(read_only=True)
-    class Meta: model = Vendedor; fields = '__all__'
-
-class AdministradorDetailSerializer(serializers.ModelSerializer):
-    user = UserBasicSerializer(read_only=True)
-    tienda = TiendaBasicSerializer(read_only=True)
-    class Meta: model = Administrador; fields = '__all__'
 
 # --- SERIALIZERS PARA EDITAR PERFIL ---
 # --- SERIALIZADOR 1: Solo los campos del perfil anidado ---
@@ -181,13 +186,17 @@ class ProfileDataSerializer(serializers.ModelSerializer):
 class UserProfileUpdateSerializer(serializers.ModelSerializer):
     profile = serializers.DictField(required=False)
 
+    cliente_profile = serializers.DictField(required=False, write_only=True)
+
     class Meta:
         model = User
-        fields = ['email', 'profile']  # agrega otros campos de User si tienes
+        fields = ['email', 'profile', 'cliente_profile']  # agrega otros campos de User si tienes
 
     def update(self, instance, validated_data):
         # Extrae datos del perfil si existen
         profile_data = validated_data.pop('profile', None)
+
+        cliente_data = validated_data.pop('cliente_profile', None)
 
         # Actualiza campos del usuario
         for attr, value in validated_data.items():
@@ -200,6 +209,14 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
             for attr, value in profile_data.items():
                 setattr(profile, attr, value)
             profile.save()
+
+        if cliente_data and hasattr(instance, 'cliente_profile'):
+            cliente_profile = instance.cliente_profile
+            # Iteramos solo sobre los campos que permitimos
+            for attr, value in cliente_data.items():
+                if attr in ['nit', 'razon_social']:
+                    setattr(cliente_profile, attr, value)
+            cliente_profile.save()
 
         return instance
 

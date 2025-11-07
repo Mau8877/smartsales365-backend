@@ -225,7 +225,6 @@ class UserViewSet(viewsets.ModelViewSet):
         log_action(request=request, accion=f"Cambió la contraseña del usuario (id:{user.id_usuario})", objeto=f"Usuario: {user.email}", usuario=request.user)
         return Response({'message': 'Contraseña actualizada. Se requiere un nuevo login.'}, status=status.HTTP_200_OK)
 
-    # --- (ACCIÓN FINAL) SUBIR FOTO DE PERFIL A CLOUDINARY ---
     @action(
         detail=False, 
         methods=['post'], 
@@ -274,7 +273,7 @@ class UserViewSet(viewsets.ModelViewSet):
         tienda_info = f" en Tienda: {tienda_actor.nombre}" if actor.is_authenticated and tienda_actor else ""
         log_action(request=self.request, accion=f"Creó usuario {user_nombre}{tienda_info}", objeto=f"Usuario: {user_nombre} (id:{user_obj.id_usuario})", usuario=actor if actor.is_authenticated else None)
 
-    @action(detail=False, methods=['post'], permission_classes=[AllowAny])
+    @action(detail=False, methods=['post'], permission_classes=[AllowAny], authentication_classes=[])
     def login(self, request, *args, **kwargs):
         email = request.data.get('email')
         password = request.data.get('password')
@@ -398,24 +397,51 @@ class RolViewSet(viewsets.ModelViewSet):
 
 
 class ClienteViewSet(viewsets.ModelViewSet):
-    """Gestión de perfiles de Clientes."""
+    """
+    Gestión de perfiles de Clientes.
+    Permite búsqueda global por NIT para Vendedores/Admins.
+    """
     queryset = Cliente.objects.all().select_related('user__profile', 'user__rol')
     serializer_class = ClienteDetailSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = CustomPageNumberPagination
-    filter_backends = [SearchFilter, OrderingFilter]
-    search_fields = ['nivel_fidelidad', 'user__email', 'user__profile__nombre', 'user__profile__apellido']
-    ordering_fields = ['nivel_fidelidad', 'puntos_acumulados', 'user__email']
+    
+    # 1. Añadido DjangoFilterBackend
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    
+    # 2. Añadido nit y razon_social a la búsqueda
+    search_fields = [
+        'nivel_fidelidad', 'user__email', 'user__profile__nombre', 
+        'user__profile__apellido', 'nit', 'razon_social'
+    ]
+    
+    # 3. Añadido nit al ordenamiento
+    ordering_fields = ['nivel_fidelidad', 'puntos_acumulados', 'user__email', 'nit']
+    
+    # 4. Añadido filtro exacto para NIT (¡clave para el POS!)
+    filterset_fields = {
+        'nit': ['exact'],
+    }
 
     def get_queryset(self):
+        """
+        Queryset modificado para el POS:
+        - Admins/Vendedores/SuperAdmins pueden buscar en TODOS los clientes.
+        - Un cliente solo puede verse a sí mismo.
+        """
         user = self.request.user
         queryset = super().get_queryset()
-        if not user.is_authenticated: return queryset.none()
-        if user.rol and user.rol.nombre == 'superAdmin': return queryset
+        if not user.is_authenticated: 
+            return queryset.none()
         
-        tienda_actual = get_user_tienda(user)
-        if tienda_actual:
-            return queryset.filter(user__tiendas_como_cliente=tienda_actual)
+        # SuperAdmin, Admin, y Vendedor pueden buscar en la lista global de clientes
+        if user.rol and user.rol.nombre in ['superAdmin', 'admin', 'vendedor']:
+            return queryset
+        
+        # Un cliente solo puede verse a sí mismo
+        if user.rol and user.rol.nombre == 'cliente':
+            return queryset.filter(user=user)
+            
         return queryset.none()
 
 

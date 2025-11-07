@@ -2,6 +2,8 @@ from django.db import models
 from django.conf import settings
 from django.utils import timezone
 from dateutil.relativedelta import relativedelta
+from django.utils.text import slugify
+from cloudinary_storage.storage import MediaCloudinaryStorage
 
 # Modelo Planes de Suscripción SaaS
 class PlanSuscripcion(models.Model):
@@ -62,7 +64,54 @@ class Tienda(models.Model):
         related_name='tiendas_como_cliente'
     )
 
+    # --- CAMPOS NUEVOS AÑADIDOS PARA EL PERFIL PÚBLICO ---
+    # Para la URL (ej: /store/mi-tienda-cool)
+    slug = models.SlugField(
+        max_length=100, 
+        unique=True, 
+        db_index=True, 
+        null=True, 
+        blank=True
+    )
+    
+    # Para los filtros de búsqueda (ej: Ropa, Electrónica)
+    rubro = models.CharField(
+        max_length=100, 
+        null=True, 
+        blank=True, 
+        default="General"
+    )
+    
+    # Para la StoreCard (el eslogan)
+    descripcion_corta = models.CharField(
+        max_length=150, 
+        null=True, 
+        blank=True
+    )
+    
+    # Para la identidad visual (Logo y Banner)
+    logo = models.ImageField(
+        upload_to='logos_tiendas/',
+        storage=MediaCloudinaryStorage(),
+        null=True, blank=True
+    )
+    banner = models.ImageField(
+        upload_to='banners_tiendas/',
+        storage=MediaCloudinaryStorage(),
+        null=True, blank=True
+    )
+
     def save(self, *args, **kwargs):
+        # Si no hay slug, créalo desde el nombre
+        if not self.slug:
+            self.slug = slugify(self.nombre)
+            # Nos aseguramos de que sea único
+            original_slug = self.slug
+            counter = 1
+            while Tienda.objects.filter(slug=self.slug).exists():
+                self.slug = f"{original_slug}-{counter}"
+                counter += 1
+
         if not self.pk and self.plan: # si es un objeto nuevo
             if self.plan.dias_prueba > 0:
                 self.fecha_proximo_cobro = timezone.now().date() + relativedelta(days=self.plan.dias_prueba)
