@@ -274,7 +274,8 @@ class UserViewSet(viewsets.ModelViewSet):
         tienda_info = f" en Tienda: {tienda_actor.nombre}" if actor.is_authenticated and tienda_actor else ""
         log_action(request=self.request, accion=f"Creó usuario {user_nombre}{tienda_info}", objeto=f"Usuario: {user_nombre} (id:{user_obj.id_usuario})", usuario=actor if actor.is_authenticated else None)
 
-    @action(detail=False, methods=['post'], permission_classes=[AllowAny])
+
+    @action(detail=False, methods=['post'], permission_classes=[AllowAny], authentication_classes=[])
     def login(self, request, *args, **kwargs):
         email = request.data.get('email')
         password = request.data.get('password')
