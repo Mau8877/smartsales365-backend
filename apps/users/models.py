@@ -81,13 +81,29 @@ class User(AbstractBaseUser, PermissionsMixin):
         return self.is_staff
 
     def puede_acceder_sistema(self):
-        """Verifica si el usuario puede acceder al sistema basado en su rol y estado."""
+        """
+        Verifica si el usuario puede acceder al sistema SaaS (Dashboard).
+        ¡Esta función NO debe permitir el acceso a 'cliente'!
+        """
+        # 1. Comprobaciones básicas
         if not self.is_active:
             return False
         if not self.rol:
             return False
+
+        # 2. Lista de roles que SÍ pueden acceder al dashboard
+        roles_permitidos_saas = ['admin', 'superAdmin', 'vendedor']
+
+        # 3. ¡COMPROBACIÓN CRÍTICA!
+        #    Rechaza si el rol NO está en la lista permitida (ej. 'cliente')
+        if self.rol.nombre not in roles_permitidos_saas:
+            return False 
+
+        # 4. superAdmin siempre entra
         if self.rol.nombre == 'superAdmin':
             return True
+
+        # 5. Para 'admin' y 'vendedor', comprueba el estado
         return self.rol.estado == 'ACTIVO'
 
     def __str__(self):

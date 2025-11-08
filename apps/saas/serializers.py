@@ -18,13 +18,31 @@ class TiendaPublicSerializer(serializers.ModelSerializer):
         ]
     
     def get_logo_url(self, obj):
-        if obj.logo:
-            return obj.logo.url
+        if obj.logo and hasattr(obj.logo, 'url') and obj.logo.url:
+            url = obj.logo.url
+            # --- ¡MAGIA AQUÍ! ---
+            # c_fill: Recorta para llenar el área.
+            # ar_1:1: Proporción (Aspect Ratio) 1:1 (cuadrado).
+            # g_auto: Punto focal automático (inteligente) para el recorte.
+            transformation = "c_fill,ar_1:1,g_auto"
+            
+            # Inyectamos la transformación en la URL
+            return url.replace("/image/upload/", f"/image/upload/{transformation}/")
+        
         return None # O una URL a un logo por defecto
 
     def get_banner_url(self, obj):
-        if obj.banner:
-            return obj.banner.url
+        if obj.banner and hasattr(obj.banner, 'url') and obj.banner.url:
+            url = obj.banner.url
+            # --- ¡MAGIA AQUÍ! ---
+            # c_fill: Recorta para llenar el área.
+            # ar_16:9: Proporción (Aspect Ratio) 16:9 (video).
+            # g_auto: Punto focal automático (inteligente) para el recorte.
+            transformation = "c_fill,ar_16:9,g_auto"
+            
+            # Inyectamos la transformación en la URL
+            return url.replace("/image/upload/", f"/image/upload/{transformation}/")
+        
         return None # O una URL a un banner por defecto
 
 # Serializer para el formulario de registro público

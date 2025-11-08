@@ -15,7 +15,7 @@ from .serializers import (
     UserSerializer, RolSerializer, ClienteDetailSerializer, 
     VendedorDetailSerializer, AdministradorDetailSerializer,
     UserProfileUpdateSerializer, ChangePasswordSerializer,
-    UserPhotoSerializer,
+    UserPhotoSerializer, CustomerRegisterSerializer,
 )
 from apps.auditoria.utils import log_action
 from config.pagination import CustomPageNumberPagination
@@ -71,11 +71,11 @@ class UserViewSet(viewsets.ModelViewSet):
     search_fields = ['email', 'profile__nombre', 'profile__apellido'] 
     filter_backends = [DjangoFilterBackend, OrderingFilter, SearchFilter]
     filterset_fields = {
-        'rol__nombre': ['in', 'exact'], # <-- 'in' nos permite filtrar por lista
+        'rol__nombre': ['in', 'exact'],
     }
     
     def get_permissions(self):
-        if self.action in ['create', 'login']:
+        if self.action in ['create', 'login', 'customer_login', 'customer_register']:
             return [AllowAny()]
         if self.action in ['me', 'logout', 'cambiar_password', 'change_my_password']:
              return [IsAuthenticated()]
@@ -324,6 +324,70 @@ class UserViewSet(viewsets.ModelViewSet):
         log_action(request=request, accion=f"Cierre de sesión{loginfo}", objeto=f"Usuario: {user.email}", usuario=user)
         Token.objects.filter(user=user).delete()
         return Response({"message": "Cierre de sesión exitoso"}, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], permission_classes=[AllowAny], authentication_classes=[], url_path='customer-login')
+    def customer_login(self, request, *args, **kwargs):
+        """
+        NUEVO: Login PÚBLICO solo para CLIENTES.
+        (Responde a apiClient.customerLogin)
+        """
+        email = request.data.get('email')
+        password = request.data.get('password')
+        if not email or not password:
+            return Response({"error": "El correo (email) y la contraseña son requeridos"}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = authenticate(request, username=email, password=password)
+        if user:
+            # ¡Validación clave! Solo permite entrar a clientes.
+            if not user.rol or user.rol.nombre != 'cliente':
+                return Response({"error": "Esta cuenta no es una cuenta de cliente."}, status=status.HTTP_403_FORBIDDEN)
+            
+            if not user.is_active:
+                return Response({"error": "Esta cuenta está inactiva."}, status=status.HTTP_403_FORBIDDEN)
+
+            login(request, user) # Opcional, pero bueno para la sesión de Django
+            token, _ = Token.objects.get_or_create(user=user)
+            
+            log_action(request, f"Inicio de sesión (Cliente)", f"Usuario: {email}", user)
+
+            # Respuesta simple para el cliente (sin tienda_id)
+            return Response({
+                "message": "Login de cliente exitoso",
+                "token": token.key,
+                "user_id": user.id_usuario,
+                "rol": user.rol.nombre,
+                "nombre_completo": f"{user.profile.nombre} {user.profile.apellido}" if hasattr(user, 'profile') else 'N/A'
+            }, status=status.HTTP_200_OK)
+        
+        return Response({"error": "Credenciales inválidas"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    @action(detail=False, methods=['post'], permission_classes=[AllowAny], authentication_classes=[], url_path='customer-register')
+    def customer_register(self, request, *args, **kwargs):
+        """
+        NUEVO: Registro PÚBLICO solo para CLIENTES.
+        (Responde a apiClient.customerRegister)
+        """
+        # Usamos el nuevo serializer simple
+        serializer = CustomerRegisterSerializer(data=request.data, context=self.get_serializer_context())
+        
+        if serializer.is_valid():
+            user = serializer.save()
+            
+            # Loguear al usuario automáticamente después de registrarse
+            token, _ = Token.objects.get_or_create(user=user)
+            
+            log_action(request, f"Registro de nuevo cliente", f"Usuario: {user.email}", user)
+
+            # Devolver la misma respuesta que el login de cliente
+            return Response({
+                "message": "Registro de cliente exitoso",
+                "token": token.key,
+                "user_id": user.id_usuario,
+                "rol": user.rol.nombre,
+                "nombre_completo": f"{user.profile.nombre} {user.profile.apellido}" if hasattr(user, 'profile') else 'N/A'
+            }, status=status.HTTP_201_CREATED) # 201 Created
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsSuperAdmin])
     def cambiar_password(self, request, pk=None):

@@ -271,3 +271,53 @@ class UserPhotoSerializer(serializers.ModelSerializer):
         # Reemplaza el campo file por la URL en la respuesta
         data['foto_perfil'] = data.get('foto_perfil_url')
         return data
+    
+class CustomerRegisterSerializer(serializers.ModelSerializer):
+    """
+    Serializador simple para el registro PÚBLICO de clientes.
+    Toma datos básicos y crea el User, UserProfile, y Cliente.
+    """
+    email = serializers.EmailField(required=True)
+    password = serializers.CharField(write_only=True, required=True, min_length=8, style={'input_type': 'password'})
+    nombre = serializers.CharField(required=True, write_only=True)
+    apellido = serializers.CharField(required=True, write_only=True)
+    telefono = serializers.CharField(required=False, allow_blank=True, write_only=True)
+
+    class Meta:
+        model = User
+        fields = ('email', 'password', 'nombre', 'apellido', 'telefono')
+
+    def validate_email(self, value):
+        """Valida que el email no esté ya en uso."""
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError("Este correo electrónico ya está en uso.")
+        return value
+
+    @transaction.atomic
+    def create(self, validated_data):
+        # 1. Encontrar el Rol 'cliente'
+        try:
+            rol_cliente = Rol.objects.get(nombre='cliente')
+        except Rol.DoesNotExist:
+            # Esto es un error de configuración del servidor, no del usuario
+            raise serializers.ValidationError("El rol 'cliente' no está configurado en el sistema.")
+
+        # 2. Crear el User
+        user = User.objects.create_user(
+            email=validated_data['email'],
+            password=validated_data['password'],
+            rol=rol_cliente
+        )
+
+        # 3. Crear el UserProfile
+        UserProfile.objects.create(
+            user=user,
+            nombre=validated_data['nombre'],
+            apellido=validated_data['apellido'],
+            telefono=validated_data.get('telefono', '')
+        )
+
+        # 4. Crear el perfil Cliente (vacío, listo para usarse)
+        Cliente.objects.create(user=user)
+
+        return user
