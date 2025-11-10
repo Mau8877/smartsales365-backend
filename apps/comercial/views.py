@@ -188,6 +188,32 @@ class CategoriaViewSet(TenantAwareViewSet):
             instance.save()
             log_action(self.request, "Desactivó Categoría (vía Delete)", f"Categoría: {nombre} (ID: {id_instancia})", self.request.user)
 
+    @action(
+        detail=False,
+        methods=['get'],
+        permission_classes=[IsAuthenticated],
+        url_path='con-productos'
+    )
+    def con_productos(self, request):
+        """
+        Endpoint para obtener categorías con el contador de productos activos.
+        Retorna categorías que tienen al menos 1 producto activo.
+        """
+        from django.db.models import Count, Q
+        
+        queryset = self.get_queryset().filter(estado=True).annotate(
+            total_productos=Count('productos', filter=Q(productos__estado=True))
+        ).filter(total_productos__gt=0)
+        
+        serializer = self.get_serializer(queryset, many=True)
+        
+        # Agregar el contador al response
+        data = serializer.data
+        for i, categoria in enumerate(queryset):
+            data[i]['total_productos'] = categoria.total_productos
+        
+        return Response(data)
+
 
 
 class LogPrecioProductoViewSet(TenantAwareViewSet):
@@ -352,6 +378,53 @@ class ProductoViewSet(TenantAwareViewSet):
                 {"error": str(e)}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    @action(
+        detail=False,
+        methods=['get'],
+        permission_classes=[IsAuthenticated],
+        url_path='destacados'
+    )
+    def destacados(self, request):
+        """
+        Endpoint para obtener productos destacados.
+        Retorna productos con stock > 0, ordenados por fecha de creación (más recientes primero).
+        Query params opcionales:
+        - limit: número de productos a retornar (default: 10)
+        """
+        limit = int(request.query_params.get('limit', 10))
+        
+        queryset = self.get_queryset().filter(
+            estado=True,
+            stock__gt=0
+        ).order_by('-id')[:limit]
+        
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+    @action(
+        detail=False,
+        methods=['get'],
+        permission_classes=[IsAuthenticated],
+        url_path='ofertas'
+    )
+    def ofertas(self, request):
+        """
+        Endpoint para obtener productos en oferta.
+        Retorna productos con stock bajo (stock < 10) como 'ofertas'.
+        Query params opcionales:
+        - limit: número de productos a retornar (default: 10)
+        """
+        limit = int(request.query_params.get('limit', 10))
+        
+        queryset = self.get_queryset().filter(
+            estado=True,
+            stock__lt=10,
+            stock__gt=0
+        ).order_by('stock')[:limit]
+        
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
 
 
 # --- ViewSets de Carrito ---
