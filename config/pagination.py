@@ -7,3 +7,12 @@ class CustomPageNumberPagination(PageNumberPagination):
     page_size_query_param = 'page_size' 
     # Límite máximo para evitar que el cliente pida demasiados registros
     max_page_size = 100
+
+class PublicProductPagination(PageNumberPagination):
+    """
+    Paginación para las vistas públicas de la tienda,
+    con un tamaño de página por defecto de 8.
+    """
+    page_size = 8
+    page_size_query_param = 'page_size' # Permite ?page_size=18
+    max_page_size = 36 # Límite máximo

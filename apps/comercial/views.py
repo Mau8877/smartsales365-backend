@@ -5,7 +5,7 @@ from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
-from django.db.models import F
+from django.db.models import F, Q, Count
 from .models import (
     Marca, Categoria, LogPrecioProducto, Producto, Foto, 
     Carrito, Detalle_Carrito
@@ -13,10 +13,10 @@ from .models import (
 from .serializers import (
     MarcaSerializer, CategoriaSerializer, LogPrecioProductoSerializer,
     ProductoSerializer, FotoSerializer, CarritoSerializer,
-    AddDetalleCarritoSerializer
+    AddDetalleCarritoSerializer, ProductoPublicSerializer
 )
 from apps.auditoria.utils import log_action
-from config.pagination import CustomPageNumberPagination
+from config.pagination import CustomPageNumberPagination, PublicProductPagination
 from apps.users.utils import get_user_tienda 
 from apps.saas.models import Tienda
 
@@ -143,6 +143,62 @@ class MarcaViewSet(TenantAwareViewSet):
             instance.save()
             log_action(self.request, "Desactivó Marca (vía Delete)", f"Marca: {nombre} (ID: {id_instancia})", self.request.user)
 
+    @action(
+        detail=False,
+        methods=['get'],
+        permission_classes=[permissions.AllowAny],
+        url_path='public-con-productos'
+    )
+    def public_con_productos(self, request):
+        """
+        Retorna un listado de marcas activas que tienen al menos 1 producto activo,
+        filtradas por tienda.
+        
+        Query Params:
+        - tienda (requerido): ID de la tienda.
+        - categoria_id (opcional): Filtra marcas que tengan productos en esta categoría.
+        """
+        tienda_id = request.query_params.get('tienda')
+        if not tienda_id:
+            return Response(
+                {"error": "El parámetro 'tienda' es requerido."}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Queryset base: Marcas activas de la tienda
+        queryset = Marca.objects.filter(tienda_id=tienda_id, estado=True)
+        
+        # Filtro de anotación base
+        filtro_productos = Q(producto__estado=True, producto__tienda_id=tienda_id)
+
+        # Si se especifica una categoría, se añade al filtro de productos
+        categoria_id = request.query_params.get('categoria_id')
+        if categoria_id:
+            try:
+                # Nos aseguramos que la categoría también pertenezca a la tienda
+                Categoria.objects.get(pk=categoria_id, tienda_id=tienda_id)
+                filtro_productos &= Q(producto__categorias__id=categoria_id)
+            except Categoria.DoesNotExist:
+                return Response(
+                    {"error": "Categoría no válida para esta tienda."}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        # Anotamos, filtramos por las que tienen productos, y aseguramos unicidad
+        queryset = queryset.annotate(
+            total_productos=Count('producto', filter=filtro_productos)
+        ).filter(total_productos__gt=0).distinct()
+
+        # Usamos el serializer estándar
+        serializer = self.get_serializer(queryset, many=True)
+        
+        # Añadimos el contador al serializer data
+        data = serializer.data
+        for i, marca in enumerate(queryset):
+            data[i]['total_productos'] = marca.total_productos
+            
+        return Response(data)
+
 class CategoriaViewSet(TenantAwareViewSet):
     """ API endpoint para Categorías, filtrado por tienda. """
     queryset = Categoria.objects.all()
@@ -191,23 +247,34 @@ class CategoriaViewSet(TenantAwareViewSet):
     @action(
         detail=False,
         methods=['get'],
-        permission_classes=[IsAuthenticated],
-        url_path='con-productos'
+        permission_classes=[permissions.AllowAny],
+        url_path='public-con-productos'
     )
-    def con_productos(self, request):
+    def public_con_productos(self, request):
         """
-        Endpoint para obtener categorías con el contador de productos activos.
-        Retorna categorías que tienen al menos 1 producto activo.
-        """
-        from django.db.models import Count, Q
+        Retorna un listado de categorías activas que tienen al menos 1 producto activo,
+        filtradas por tienda.
         
-        queryset = self.get_queryset().filter(estado=True).annotate(
-            total_productos=Count('productos', filter=Q(productos__estado=True))
-        ).filter(total_productos__gt=0)
+        Query Params:
+        - tienda (requerido): ID de la tienda.
+        """
+        tienda_id = request.query_params.get('tienda')
+        if not tienda_id:
+            return Response(
+                {"error": "El parámetro 'tienda' es requerido."}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Filtramos por tienda, estado, y anotamos con productos activos
+        queryset = Categoria.objects.filter(
+            tienda_id=tienda_id, estado=True
+        ).annotate(
+            total_productos=Count('productos', filter=Q(productos__estado=True, productos__tienda_id=tienda_id))
+        ).filter(total_productos__gt=0) # Solo las que tienen productos
         
         serializer = self.get_serializer(queryset, many=True)
         
-        # Agregar el contador al response
+        # Añadimos el contador al serializer data
         data = serializer.data
         for i, categoria in enumerate(queryset):
             data[i]['total_productos'] = categoria.total_productos
@@ -254,6 +321,7 @@ class ProductoViewSet(TenantAwareViewSet):
     search_fields = ['nombre', 'descripcion', 'codigo_referencia']
     ordering_fields = ['nombre', 'precio', 'stock', 'estado']
     filterset_fields = {
+        'tienda': ['exact'],
         'marca': ['exact'],
         'categorias': ['exact'],
         'estado': ['exact'],
@@ -426,7 +494,88 @@ class ProductoViewSet(TenantAwareViewSet):
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
 
+    @action(
+        detail=False,
+        methods=['get'],
+        permission_classes=[permissions.AllowAny], # Abierto al público
+        url_path='public-list'
+        # ¡OJO! No podemos poner pagination_class aquí en el decorador
+    )
+    def public_list(self, request):
+        """
+        Retorna la lista PÚBLICA y paginada de productos para una tienda.
+        """
+        
+        tienda_id = request.query_params.get('tienda')
+        if not tienda_id:
+            return Response(
+                {"error": "El parámetro 'tienda' es requerido."}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        queryset = self.queryset.filter(
+            tienda_id=tienda_id, 
+            estado=True
+        )
 
+        # Aplicamos los filtros de búsqueda, ordenamiento y filterset
+        filtered_queryset = self.filter_queryset(queryset)
+        
+        # --- 
+        # --- APLICACIÓN MANUAL DE LA PAGINACIÓN ---
+        # ---
+        
+        # 1. Instanciamos el paginador que creamos
+        paginator = PublicProductPagination()
+        
+        # 2. Paginar el queryset
+        page = paginator.paginate_queryset(filtered_queryset, request, view=self)
+        
+        # 3. Esta lógica ahora usará nuestro paginador (page_size=9)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True, context=self.get_serializer_context())
+            # 4. Usamos el 'get_paginated_response' del *nuevo* paginador
+            return paginator.get_paginated_response(serializer.data)
+
+        # Fallback (no debería pasar si todo está bien)
+        serializer = self.get_serializer(filtered_queryset, many=True, context=self.get_serializer_context())
+        return Response(serializer.data)
+    
+    @action(
+        detail=True,
+        methods=['get'],
+        permission_classes=[permissions.AllowAny],
+        url_path='public-detail'
+    )
+    def public_detail(self, request, pk=None):
+        """
+        Retorna los detalles PÚBLICOS de un producto específico.
+        Solo muestra productos activos (estado=True).
+        """
+        try:
+            # Obtener el producto por ID, pero solo si está activo
+            producto = Producto.objects.select_related('marca', 'tienda').prefetch_related('categorias', 'fotos').filter(
+                pk=pk,
+                estado=True
+            ).first()
+            
+            if not producto:
+                return Response(
+                    {"error": "Producto no encontrado o no disponible."}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Usar el serializer público
+            serializer = ProductoPublicSerializer(producto, context={'request': request})
+            return Response(serializer.data)
+            
+        except Exception as e:
+            print(f"Error en public_detail: {str(e)}")  # Mantén esto por si hay otros errores
+            return Response(
+                {"error": "Error interno del servidor"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
 # --- ViewSets de Carrito ---
 class CarritoViewSet(viewsets.GenericViewSet):
     """

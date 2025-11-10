@@ -158,6 +158,25 @@ class ProductoSerializer(serializers.ModelSerializer):
             
         return instance
 
+class ProductoPublicSerializer(serializers.ModelSerializer):
+    """
+    Serializer específico para vistas PÚBLICAS de productos.
+    Solo lectura, sin campos de escritura.
+    """
+    marca = MarcaSerializer(read_only=True)
+    categorias = CategoriaSerializer(many=True, read_only=True)
+    fotos = FotoSerializer(many=True, read_only=True)
+    tienda = serializers.StringRelatedField(read_only=True)
+
+    class Meta:
+        model = Producto
+        fields = (
+            'id', 'nombre', 'descripcion', 'precio', 'stock', 
+            'codigo_referencia', 'estado', 'tienda', 'marca', 
+            'categorias', 'fotos'
+            # Quitamos 'created_at', 'updated_at' ya que no existen en el modelo
+        )
+        read_only_fields = fields  # Todos los campos son de solo lectura
 
 # --- Serializers de Carrito (Lectura y Escritura) ---
 
