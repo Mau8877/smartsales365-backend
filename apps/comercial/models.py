@@ -131,7 +131,7 @@ class Carrito(models.Model):
         on_delete=models.CASCADE,
         related_name="carritos"
     )
-
+    total = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     def __str__(self):
         try:
             nombre = self.cliente.user.profile.nombre
@@ -151,6 +151,6 @@ class Detalle_Carrito(models.Model):
         on_delete=models.CASCADE,
         related_name="items"
     )
-    
+    precio_unitario = models.DecimalField(max_digits=10, decimal_places=2, null=True)
     class Meta:
         unique_together = ('carrito', 'producto')

@@ -6,6 +6,8 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import F, Q, Count
+from django.db import transaction
+from decimal import Decimal
 from .models import (
     Marca, Categoria, LogPrecioProducto, Producto, Foto, 
     Carrito, Detalle_Carrito
@@ -13,7 +15,7 @@ from .models import (
 from .serializers import (
     MarcaSerializer, CategoriaSerializer, LogPrecioProductoSerializer,
     ProductoSerializer, FotoSerializer, CarritoSerializer,
-    AddDetalleCarritoSerializer, ProductoPublicSerializer
+    ProductoPublicSerializer
 )
 from apps.auditoria.utils import log_action
 from config.pagination import CustomPageNumberPagination, PublicProductPagination
@@ -579,137 +581,140 @@ class ProductoViewSet(TenantAwareViewSet):
 # --- ViewSets de Carrito ---
 class CarritoViewSet(viewsets.GenericViewSet):
     """
-    API endpoint para gestionar el carrito de compras del cliente.
-    Se accede principalmente a través de /api/comercial/carritos/mi_carrito/
+    API endpoint para gestionar la *confirmación* del carrito de compras.
     """
-    queryset = Carrito.objects.prefetch_related(
-        'items__producto__fotos' # Optimización profunda
-    ).all()
+    queryset = Carrito.objects.prefetch_related('items__producto__fotos').all()
     serializer_class = CarritoSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated] # Solo usuarios logueados pueden confirmar
 
-    def get_carrito_activo(self, request):
-        """ Helper para obtener o crear el carrito del cliente. """
+    @action(detail=False, methods=['post'], url_path='confirmar-pedido')
+    def confirmar_pedido(self, request):
+        """
+        Recibe un carrito completo desde el frontend (localStorage)
+        y lo guarda en la base de datos como un Carrito/Pedido.
+
+        Espera un JSON:
+        {
+            "tienda_id": 1,
+            "items": [
+                { "producto_id": 10, "cantidad": 2 },
+                { "producto_id": 12, "cantidad": 1 }
+            ]
+        }
+        """
+        
+        # 1. Obtener el perfil de cliente del usuario
         try:
-            # Asumimos que la relación inversa de User a Cliente es 'cliente_profile'
             cliente = request.user.cliente_profile
-        except Exception:
-            raise serializers.ValidationError("Tu usuario no es un cliente válido.")
+        except Cliente.DoesNotExist:
+            return Response(
+                {"error": "Tu cuenta de usuario no es un cliente válido."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # 2. Validar datos de entrada
+        tienda_id = request.data.get('tienda_id')
+        items_data = request.data.get('items', [])
+
+        if not tienda_id:
+            return Response(
+                {"error": "El campo 'tienda_id' es requerido."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
-        tienda = get_user_tienda(request.user) # Obtenemos la tienda del cliente/usuario
-        if not tienda:
-            # Fallback o lógica para clientes de múltiples tiendas
-            raise serializers.ValidationError("No se pudo determinar la tienda para este carrito.")
+        if not items_data:
+            return Response(
+                {"error": "El carrito está vacío. No se enviaron 'items'."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-        carrito, created = Carrito.objects.get_or_create(
-            cliente=cliente,
-            # (Opcional) Podrías añadir un filtro de 'estado=ACTIVO' si lo implementas
-            defaults={'tienda': tienda}
-        )
-        return carrito
-
-    @action(detail=False, methods=['get'], url_path='mi_carrito')
-    def mi_carrito(self, request):
-        """ Obtiene el carrito activo del usuario actual. """
-        carrito = self.get_carrito_activo(request)
-        serializer = self.get_serializer(carrito)
-        return Response(serializer.data)
-
-    @action(detail=False, methods=['post'], url_path='mi_carrito/add')
-    def add_item(self, request):
-        """ Añade un producto al carrito activo. """
-        carrito = self.get_carrito_activo(request)
-        serializer = AddDetalleCarritoSerializer(data=request.data)
-        
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-        producto_id = serializer.validated_data['producto_id']
-        cantidad_a_anadir = serializer.validated_data['cantidad']
-        
         try:
-            producto = Producto.objects.get(pk=producto_id, tienda=carrito.tienda)
-        except Producto.DoesNotExist:
-             return Response({"error": "Producto no encontrado en esta tienda."}, status=status.HTTP_404_NOT_FOUND)
+            tienda = Tienda.objects.get(pk=tienda_id)
+        except Tienda.DoesNotExist:
+            return Response(
+                {"error": "Tienda no encontrada."},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
-        # Validar stock
-        if producto.stock < cantidad_a_anadir:
-            return Response({"error": f"Stock insuficiente. Disponible: {producto.stock}"}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Busca el item o créalo
-        item, created = Detalle_Carrito.objects.get_or_create(
-            carrito=carrito,
-            producto=producto,
-            defaults={'cantidad': cantidad_a_anadir}
-        )
-
-        if not created:
-            # Si el item ya existe, suma la cantidad
-            nueva_cantidad = item.cantidad + cantidad_a_anadir
-            if producto.stock < nueva_cantidad:
-                 return Response({"error": f"Stock insuficiente. Tienes {item.cantidad} en el carrito. Disponible: {producto.stock}"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            item.cantidad = F('cantidad') + cantidad_a_anadir
-            item.save()
-        
-        # log_action(request, "Añadió item al carrito", f"Producto: {producto.nombre} (Cant: {cantidad_a_anadir})", request.user)
-        return Response(self.get_serializer(carrito).data, status=status.HTTP_200_OK)
-
-    @action(detail=False, methods=['put'], url_path='mi_carrito/items/(?P<detalle_pk>[^/.]+)')
-    def update_item(self, request, detalle_pk=None):
-        """ Actualiza la cantidad de un item en el carrito. """
-        carrito = self.get_carrito_activo(request)
-        
+        # 3. Iniciar transacción atómica
         try:
-            item = Detalle_Carrito.objects.get(pk=detalle_pk, carrito=carrito)
-        except Detalle_Carrito.DoesNotExist:
-            return Response({"error": "Item no encontrado en el carrito."}, status=status.HTTP_404_NOT_FOUND)
+            with transaction.atomic():
+                
+                # 4. Crear el Carrito (Pedido) principal
+                nuevo_carrito = Carrito.objects.create(
+                    cliente=cliente,
+                    tienda=tienda,
+                    total=Decimal('0.00') # <--- CAMBIO AQUÍ: Iniciar total en 0
+                )
+                
+                detalles_a_crear = []
+                productos_a_actualizar = []
+                total_pedido = Decimal('0.00') # <--- CAMBIO AQUÍ: Inicializar total
 
-        cantidad = request.data.get('cantidad')
-        if cantidad is None:
-            return Response({"error": "'cantidad' es requerida."}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            cantidad = int(cantidad)
-            if cantidad <= 0:
-                # Si la cantidad es 0 o menos, elimina el item
-                return self.remove_item(request, detalle_pk)
-        except ValueError:
-            return Response({"error": "'cantidad' debe ser un número entero."}, status=status.HTTP_400_BAD_REQUEST)
+                # 5. Iterar sobre los items para validar stock y preparar la creación
+                for item_data in items_data:
+                    producto_id = item_data.get('producto_id')
+                    cantidad_str = item_data.get('cantidad')
 
-        # Validar stock
-        if item.producto.stock < cantidad:
-            return Response({"error": f"Stock insuficiente. Disponible: {item.producto.stock}"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        item.cantidad = cantidad
-        item.save()
-        
-        log_action(request, "Actualizó item en carrito", f"Producto: {item.producto.nombre} (Cant: {cantidad})", request.user)
-        return Response(self.get_serializer(carrito).data, status=status.HTTP_200_OK)
+                    # --- Validación de cantidad ---
+                    if not producto_id or not cantidad_str:
+                         raise serializers.ValidationError(f"Item inválido en el carrito (datos faltantes).")
+                    try:
+                        cantidad = int(cantidad_str)
+                        if cantidad <= 0: raise ValueError()
+                    except (ValueError, TypeError):
+                         raise serializers.ValidationError(f"Cantidad inválida para el producto ID {producto_id}.")
 
+                    # --- Validación de Producto y Stock ---
+                    try:
+                        producto = Producto.objects.select_for_update().get(
+                            pk=producto_id, 
+                            tienda=tienda, 
+                            estado=True
+                        )
+                    except Producto.DoesNotExist:
+                        raise serializers.ValidationError(f"El producto con ID {producto_id} no se encuentra o no está disponible.")
 
-    @action(detail=False, methods=['delete'], url_path='mi_carrito/items/(?P<detalle_pk>[^/.]+)')
-    def remove_item(self, request, detalle_pk=None):
-        """ Elimina un item del carrito. """
-        carrito = self.get_carrito_activo(request)
-        
-        try:
-            item = Detalle_Carrito.objects.get(pk=detalle_pk, carrito=carrito)
-        except Detalle_Carrito.DoesNotExist:
-            return Response({"error": "Item no encontrado en el carrito."}, status=status.HTTP_404_NOT_FOUND)
-        
-        nombre_producto = item.producto.nombre
-        item.delete()
-        
-        log_action(request, "Eliminó item de carrito", f"Producto: {nombre_producto}", request.user)
-        return Response(self.get_serializer(carrito).data, status=status.HTTP_200_OK)
+                    if producto.stock < cantidad:
+                        raise serializers.ValidationError(
+                            f"Stock insuficiente para '{producto.nombre}'. "
+                            f"Disponible: {producto.stock}, Solicitado: {cantidad}"
+                        )
+                    
+                    # --- Lógica de Pedido ---
+                    producto.stock -= cantidad
+                    productos_a_actualizar.append(producto)
 
-    @action(detail=False, methods=['delete'], url_path='mi_carrito/clear')
-    def clear_carrito(self, request):
-        """ Elimina todos los items del carrito. """
-        carrito = self.get_carrito_activo(request)
-        carrito.items.all().delete()
-        
-        log_action(request, "Vació el carrito", "Todos los items eliminados", request.user)
-        return Response(self.get_serializer(carrito).data, status=status.HTTP_200_OK)
+                    # <--- CAMBIO AQUÍ: Capturar precio y calcular total ---
+                    precio_en_compra = producto.precio 
+                    total_pedido += (precio_en_compra * cantidad)
 
+                    # Preparar el Detalle_Carrito
+                    detalles_a_crear.append(
+                        Detalle_Carrito(
+                            carrito=nuevo_carrito,
+                            producto=producto,
+                            cantidad=cantidad,
+                            precio_unitario=precio_en_compra # <--- CAMBIO AQUÍ: Guardar precio
+                        )
+                    )
+
+                # 6. Guardar todo en la Base de Datos
+                Detalle_Carrito.objects.bulk_create(detalles_a_crear)
+                Producto.objects.bulk_update(productos_a_actualizar, ['stock'])
+                
+                # <--- CAMBIO AQUÍ: Guardar el total final en el Carrito ---
+                nuevo_carrito.total = total_pedido 
+                nuevo_carrito.save(update_fields=['total'])
+
+        # 7. Manejar errores de validación (ej. Stock)
+        except serializers.ValidationError as e:
+            return Response(
+                {"error": e.detail[0] if isinstance(e.detail, list) else str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # 8. Devolver el pedido recién creado
+        nuevo_carrito.refresh_from_db()
+        serializer = self.get_serializer(nuevo_carrito)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)

@@ -212,9 +212,14 @@ class DetalleCarritoSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Detalle_Carrito
-        fields = ('id', 'cantidad', 'producto', 'subtotal')
+        fields = ('id', 'cantidad', 'producto', 'precio_unitario', 'subtotal')
     
     def get_subtotal(self, obj):
+        # ¡Usamos el precio_unitario guardado!
+        if obj.precio_unitario is not None:
+            return obj.cantidad * obj.precio_unitario
+        
+        # Fallback por si el precio no se guardó (aunque no debería pasar)
         if obj.producto:
             return obj.cantidad * obj.producto.precio
         return 0
@@ -222,31 +227,10 @@ class DetalleCarritoSerializer(serializers.ModelSerializer):
 class CarritoSerializer(serializers.ModelSerializer):
     """
     Serializer principal para el Carrito.
-    Muestra los items anidados y calcula el total.
+    Muestra los items anidados y el total (leído desde la BD).
     """
     items = DetalleCarritoSerializer(many=True, read_only=True)
-    total_carrito = serializers.SerializerMethodField()
 
     class Meta:
         model = Carrito
-        fields = ('id', 'fecha_creacion', 'cliente', 'tienda', 'items', 'total_carrito')
-    
-    def get_total_carrito(self, obj):
-        return sum(
-            item.cantidad * item.producto.precio 
-            for item in obj.items.all() if item.producto
-        )
-
-
-class AddDetalleCarritoSerializer(serializers.Serializer):
-    """
-    Serializer simple para la acción de "Añadir al Carrito".
-    Valida el producto y la cantidad.
-    """
-    producto_id = serializers.IntegerField()
-    cantidad = serializers.IntegerField(default=1, min_value=1)
-
-    def validate_producto_id(self, value):
-        if not Producto.objects.filter(pk=value, estado=True).exists():
-            raise serializers.ValidationError("El producto no existe o no está disponible.")
-        return value
+        fields = ('id', 'fecha_creacion', 'cliente', 'tienda', 'total', 'items')
